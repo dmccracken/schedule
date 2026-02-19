@@ -232,6 +232,7 @@ class JiraClient:
             created = fields.get("created")
             resolutiondate = fields.get("resolutiondate")
             assignee = fields.get("assignee", {})
+            issue_type = fields.get("issuetype", {})
 
             return {
                 "key": issue_key,
@@ -240,6 +241,7 @@ class JiraClient:
                 "assignee": assignee.get("displayName") if assignee else None,
                 "summary": fields.get("summary"),
                 "status": fields.get("status", {}).get("name"),
+                "type": issue_type.get("name"),
             }
         except requests.exceptions.RequestException as e:
             print(f"Error fetching issue {issue_key}: {e}", file=sys.stderr)
@@ -333,7 +335,9 @@ def calculate_resolution_time(created_str, resolved_str):
         return None
 
 
-def generate_release_notes_table(jira_client, bitbucket_client, components):
+def generate_release_notes_table(
+    jira_client, bitbucket_client, components, include_commit_details=False
+):
     """
     Generate release notes table for all components
 
@@ -341,9 +345,10 @@ def generate_release_notes_table(jira_client, bitbucket_client, components):
         jira_client: JiraClient instance
         bitbucket_client: BitBucketClient instance
         components: List of component dictionaries
+        include_commit_details: Whether to fetch commit counts and resolution times
 
     Returns:
-        Markdown formatted table as string
+        CSV formatted table as string
     """
     parser = ReleaseNotesParser()
     table_data = []
@@ -397,41 +402,86 @@ def generate_release_notes_table(jira_client, bitbucket_client, components):
             resolution_times = []
             developers = set()
 
+            # Track actual issue types from Jira for validation
+            jira_enhancements = 0
+            jira_defects = 0
+            mismatches = []
+
             # Process each issue
             for issue_key in all_issues:
                 # Get issue details from Jira
                 issue_details = jira_client.get_issue_details(issue_key)
                 if issue_details:
-                    # Calculate resolution time
-                    res_time = calculate_resolution_time(
-                        issue_details.get("created"), issue_details.get("resolved")
+                    # Validate issue type against release notes categorization
+                    issue_type = issue_details.get("type", "")
+                    is_defect_in_jira = issue_type == "Defect"
+                    is_defect_in_notes = issue_key in defects
+
+                    if is_defect_in_jira:
+                        jira_defects += 1
+                    else:
+                        jira_enhancements += 1
+
+                    # Check for mismatch
+                    if is_defect_in_jira != is_defect_in_notes:
+                        category_in_notes = (
+                            "Defect" if is_defect_in_notes else "Enhancement"
+                        )
+                        mismatches.append(
+                            f"{issue_key} (Jira type: {issue_type}, Release notes: {category_in_notes})"
+                        )
+
+                    # Optionally calculate resolution time
+                    if include_commit_details:
+                        res_time = calculate_resolution_time(
+                            issue_details.get("created"), issue_details.get("resolved")
+                        )
+                        if res_time is not None:
+                            resolution_times.append(res_time)
+
+                # Optionally get commits from BitBucket
+                if include_commit_details:
+                    commits = bitbucket_client.get_commits_for_issue(
+                        project_key, repo_slug, issue_key
                     )
-                    if res_time is not None:
-                        resolution_times.append(res_time)
+                    total_commits += len(commits)
 
-                # Get commits from BitBucket
-                commits = bitbucket_client.get_commits_for_issue(
-                    project_key, repo_slug, issue_key
+                    # Track developers
+                    for commit in commits:
+                        developers.add(commit.get("author", "Unknown"))
+
+            # Verify counts and log warnings if there are discrepancies
+            if jira_enhancements != len(enhancements) or jira_defects != len(defects):
+                print(
+                    f"  WARNING: Mismatch in {component_name} release {release_tag}:",
+                    file=sys.stderr,
                 )
-                total_commits += len(commits)
-
-                # Track developers
-                for commit in commits:
-                    developers.add(commit.get("author", "Unknown"))
+                print(
+                    f"    Release notes: {len(enhancements)} enhancements, {len(defects)} defects",
+                    file=sys.stderr,
+                )
+                print(
+                    f"    Jira issue types: {jira_enhancements} enhancements, {jira_defects} defects",
+                    file=sys.stderr,
+                )
+                if mismatches:
+                    print(f"    Mismatched issues:", file=sys.stderr)
+                    for mismatch in mismatches:
+                        print(f"      {mismatch}", file=sys.stderr)
 
             # Calculate average resolution time
             avg_resolution = (
                 sum(resolution_times) / len(resolution_times) if resolution_times else 0
             )
 
-            # Add to table data
+            # Add to table data using actual Jira counts
             table_data.append(
                 {
                     "component": component_name,
                     "version": version,
                     "release_tag": release_tag,
-                    "enhancements": len(enhancements),
-                    "defects": len(defects),
+                    "enhancements": jira_enhancements,
+                    "defects": jira_defects,
                     "commits": total_commits,
                     "avg_resolution_days": avg_resolution,
                     "developers": (
@@ -440,20 +490,18 @@ def generate_release_notes_table(jira_client, bitbucket_client, components):
                 }
             )
 
-    # Generate markdown table
+    # Generate CSV file
     if not table_data:
         return "No release notes data found."
 
-    markdown = "\n## Release Notes Summary\n\n"
-    markdown += "| Component | Version | Release Tag | Enhancements | Defects | Commits | Avg Resolution (days) |\n"
-    markdown += "|-----------|---------|-------------|--------------|---------|---------|----------------------|\n"
+    csv = "Component,Version,Release Tag,Enhancements,Defects,Total Commits,Time to Resolve (days)\n"
 
     for row in table_data:
-        markdown += f"| {row['component']} | {row['version']} | {row['release_tag']} | "
-        markdown += f"{row['enhancements']} | {row['defects']} | {row['commits']} | "
-        markdown += f"{row['avg_resolution_days']:.1f} |\n"
+        csv += f"{row['component']},{row['version']},{row['release_tag']},"
+        csv += f"{row['enhancements']},{row['defects']},{row['commits']},"
+        csv += f"{row['avg_resolution_days']:.1f}\n"
 
-    return markdown
+    return csv
 
 
 def print_story_points_summary(
@@ -853,6 +901,12 @@ Examples:
         help="Generate release notes table for all components",
     )
 
+    parser.add_argument(
+        "--include-commit-details",
+        action="store_true",
+        help="Include commit counts and resolution times in release notes (requires BitBucket API calls)",
+    )
+
     args = parser.parse_args()
 
     # Create Jira client
@@ -885,7 +939,12 @@ Examples:
         bitbucket_client = BitBucketClient(
             args.username, args.password, verify_ssl=not args.no_verify_ssl
         )
-        table = generate_release_notes_table(client, bitbucket_client, COMPONENTS)
+        table = generate_release_notes_table(
+            client,
+            bitbucket_client,
+            COMPONENTS,
+            include_commit_details=args.include_commit_details,
+        )
         print(table)
         sys.exit(0)
 
