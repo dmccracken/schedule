@@ -72,16 +72,16 @@ Command-line tool for querying Jira Data Center using REST API to retrieve and a
 - **Active Release Tracking**: Query in-progress issues for specific release versions
 - **Release Notes Generation**: Parse BitBucket release notes and validate against Jira issue types
 - **Commit Tracking**: Count commits per issue and calculate resolution times
+- **Developer Velocity Charts**: Generate monthly story points and issues resolved charts per developer
 - **Flexible Output**: Standard formatted output or JSON export
 
 ### Supported Components
 The tool tracks the following ASE components:
 - Alarms Dashboard (Alarm_26.01)
-- AutoUVA Dashboard (AUTO_UVA_V4.0)
+- AutoUVA Dashboard (AUTO_UVA_26.05)
 - CSV Dashboard (CSV_26.01)
-- DES Dashboard (DES_V2)
-- Everest Dashboard (Everest_V2)
-- PPTS Dashboard (PPTS_V11)
+- DES Dashboard (DES_V26.05)
+- PPTS Dashboard (PPTS_26.07)
 - ToolConnection Dashboard (Toolconnection2.0)
 - Guardband Dashboard
 - EPD Dashboard
@@ -127,6 +127,8 @@ project = ASE and component = "<component>" AND fixVersion = "<version>" ORDER B
 | `--print-jira-issues` | No | Print detailed Jira issues in JSON format |
 | `--generate-release-notes` | No | Generate release notes table for all components |
 | `--include-commit-details` | No | Include commit counts and resolution times (requires BitBucket API calls) |
+| `--developer-velocity` | No | Generate developer velocity charts (story points and issues per month) |
+| `--created-after` | No* | Filter issues created on or after this date (YYYY-MM-DD format, *required for --developer-velocity) |
 
 ### Usage Examples
 
@@ -165,6 +167,11 @@ python jira_info.py -u https://jira.company.com -U username -P password --genera
 python jira_info.py -u https://jira.company.com -U username -P password --print-queries
 ```
 
+**Generate Developer Velocity Charts:**
+```bash
+python jira_info.py -u https://jira.company.com -U username -P password --developer-velocity --created-after 2026-01-01
+```
+
 ### Output Features
 
 #### Standard Output
@@ -197,6 +204,20 @@ When using `--generate-release-notes`:
   - Average time to resolve issues (from creation to resolution)
   - Developer names who contributed to the release
 - Outputs CSV format with columns: Component, Version, Release Tag, Enhancements, Defects, Total Commits, Time to Resolve (days)
+
+#### Developer Velocity Charts
+When using `--developer-velocity --created-after YYYY-MM-DD`:
+- Queries all closed ASE issues created after the specified date
+- Tracks story points completed per developer per month
+- Generates two PNG chart files:
+  - `developer_story_points.png` - Story points by month per developer
+  - `developer_issues.png` - Issues resolved by month per developer
+- **Tester Exclusion**: Automatically excludes testers from velocity metrics. If an issue is assigned to a tester at "In Progress" time, the tool searches the assignee history to credit the last valid developer who worked on it.
+- **Current Month Filtering**: Excludes the current month to show only complete data
+- **Visual Features**:
+  - Grouped bar charts by month with color coding
+  - Vertical separator lines between developers
+  - Data labels showing exact values
 
 ### Dependencies
 ```python
@@ -253,10 +274,12 @@ schedule/
 ├── README.md
 ├── status.py
 ├── jira_info.py
-├── Status.xlsx          # Input file for status.py
-├── status_gantt_chart_image.png    # Output
-├── backlog_bar_chart_image.png     # Output
-└── active_bar_chart_image.png      # Output
+├── Status.xlsx                     # Input file for status.py
+├── status_gantt_chart_image.png    # Output from status.py
+├── backlog_bar_chart_image.png     # Output from status.py
+├── active_bar_chart_image.png      # Output from status.py
+├── developer_story_points.png      # Output from --developer-velocity
+└── developer_issues.png            # Output from --developer-velocity
 ```
 
 ---
