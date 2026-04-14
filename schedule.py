@@ -33,7 +33,7 @@ fig = px.timeline(
 fig.update_layout(
     title="Advanced Service Engineering Projects",
     xaxis=dict(
-        title="2024-2026",
+        title="2025-2026",
         showgrid=True,
         zeroline=True,
         showline=True,
