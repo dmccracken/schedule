@@ -1238,6 +1238,7 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
 
     # Generate chart instead of CSV
     import plotly.express as px
+    import numpy as np
     from datetime import datetime
 
     # Get current month to exclude incomplete data
@@ -1309,6 +1310,46 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
             "color": colors[i % len(colors)],
         }
 
+    # Calculate trend lines for each developer
+    # For grouped bars, positions are distributed around the developer index
+    num_months = len(months)
+    bar_width = 0.8 / num_months  # Total group width is ~0.8, divided among months
+
+    def get_trend_line_data(dev_idx, value_key):
+        """Calculate trend line for a developer, returning x and y coordinates."""
+        # Get months where this developer has data (non-zero values)
+        dev_months = []
+        dev_values = []
+        for month_idx, month in enumerate(months):
+            value = month_data[month][value_key][dev_idx]
+            if value > 0:
+                dev_months.append(month_idx)
+                dev_values.append(value)
+
+        # Need at least 2 points for a trend line
+        if len(dev_months) < 2:
+            return None, None
+
+        # Calculate x positions within the developer's bar group
+        # Bars are centered around dev_idx, spread from -0.4 to +0.4
+        group_width = 0.8
+        x_positions = []
+        for month_idx in dev_months:
+            # Calculate offset for this month's bar within the group
+            offset = (month_idx - (num_months - 1) / 2) * (group_width / num_months)
+            x_positions.append(dev_idx + offset)
+
+        # Fit linear regression
+        x_arr = np.array(x_positions)
+        y_arr = np.array(dev_values)
+        coeffs = np.polyfit(range(len(x_arr)), y_arr, 1)  # Linear fit
+
+        # Calculate y values for trend line at first and last x positions
+        trend_y = np.polyval(coeffs, [0, len(x_arr) - 1])
+        trend_x = [x_positions[0], x_positions[-1]]
+
+        return trend_x, trend_y.tolist()
+
     # --- Chart 1: Story Points ---
     fig_sp = go.Figure()
     for month in months:
@@ -1323,6 +1364,21 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
                 marker_color=month_data[month]["color"],
             )
         )
+
+    # Add trend lines for each developer (Story Points)
+    for dev_idx, dev in enumerate(developers):
+        trend_x, trend_y = get_trend_line_data(dev_idx, "points")
+        if trend_x is not None:
+            fig_sp.add_shape(
+                type="line",
+                x0=trend_x[0],
+                y0=trend_y[0],
+                x1=trend_x[1],
+                y1=trend_y[1],
+                line=dict(color="black", width=2),
+                xref="x",
+                yref="y",
+            )
 
     fig_sp.update_layout(
         title=f"Story Points by Month {date_range}",
@@ -1357,6 +1413,21 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
                 marker_color=month_data[month]["color"],
             )
         )
+
+    # Add trend lines for each developer (Issues)
+    for dev_idx, dev in enumerate(developers):
+        trend_x, trend_y = get_trend_line_data(dev_idx, "issues")
+        if trend_x is not None:
+            fig_issues.add_shape(
+                type="line",
+                x0=trend_x[0],
+                y0=trend_y[0],
+                x1=trend_x[1],
+                y1=trend_y[1],
+                line=dict(color="black", width=2),
+                xref="x",
+                yref="y",
+            )
 
     fig_issues.update_layout(
         title=f"Issues Resolved by Month {date_range}",
