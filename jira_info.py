@@ -844,6 +844,7 @@ COMPONENTS = [
         "component": "DES",
         "name": "DES Dashboard",
         "version": "DES_V26.05",
+        #"version": "DES_V2",
         "release_notes": None,
     },
     # {
@@ -855,6 +856,7 @@ COMPONENTS = [
     {
         "component": "PPTS",
         "name": "PPTS Dashboard",
+        #"version": "PPTS_26.03",
         "version": "PPTS_26.07",
         "release_notes": "https://apg-bb.amat.com/projects/FSSRPT/repos/pts_dashboard/browse/ReleaseNotes.txt",
     },
@@ -883,6 +885,17 @@ COMPONENTS = [
         "release_notes": None,
     },
 ]
+
+# BitBucket repositories for developer insights
+BITBUCKET_REPOS = [
+    {"project": "FSSRPT", "slug": "des", "name": "DES"},
+    {"project": "FSSRPT", "slug": "csv", "name": "CSV"},
+    {"project": "FSSRPT", "slug": "trace_segmentation", "name": "Trace Segmentation"},
+    {"project": "FSSRPT", "slug": "alarm_dispatch", "name": "Alarm Dispatch"},
+    {"project": "FSSRPT", "slug": "tool_connection_control_app", "name": "Tool Connection"},
+    {"project": "FSSRPT", "slug": "pts_dashboard", "name": "PTS Dashboard"},
+]
+
 COMMON_JQL_BACKLOG_PREFIX = (
     "project = ASE and status = new and fixVersion is EMPTY and component ="
 )
