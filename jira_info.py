@@ -146,6 +146,66 @@ class BitBucketClient:
 
         return []
 
+    def get_commit_diff_stats(self, project_key, repo_slug, commit_id, max_retries=3):
+        """
+        Get diff statistics for a specific commit
+
+        Args:
+            project_key: BitBucket project key (e.g., 'FSSRPT')
+            repo_slug: Repository slug name
+            commit_id: The commit hash
+            max_retries: Maximum number of retry attempts for 429 errors
+
+        Returns:
+            Dict with lines_added, lines_deleted, files_changed
+        """
+        base_url = "https://apg-bb.amat.com"
+        url = f"{base_url}/rest/api/1.0/projects/{project_key}/repos/{repo_slug}/commits/{commit_id}/diff"
+
+        for attempt in range(max_retries + 1):
+            try:
+                params = {"contextLines": 0, "withComments": "false"}
+                response = self.session.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                lines_added = 0
+                lines_deleted = 0
+                files_changed = set()
+
+                for diff in data.get("diffs", []):
+                    # Track file paths
+                    dest = diff.get("destination", {})
+                    if dest:
+                        files_changed.add(dest.get("toString", ""))
+
+                    # Count lines from hunks
+                    for hunk in diff.get("hunks", []):
+                        for segment in hunk.get("segments", []):
+                            segment_type = segment.get("type", "")
+                            line_count = len(segment.get("lines", []))
+                            if segment_type == "ADDED":
+                                lines_added += line_count
+                            elif segment_type == "REMOVED":
+                                lines_deleted += line_count
+
+                return {
+                    "lines_added": lines_added,
+                    "lines_deleted": lines_deleted,
+                    "files_changed": list(files_changed),
+                }
+
+            except requests.exceptions.RequestException as e:
+                if e.response is not None and e.response.status_code == 429:
+                    if attempt < max_retries:
+                        wait_time = (2**attempt) * 2
+                        time.sleep(wait_time)
+                        continue
+                # Return zeros on error rather than failing
+                return {"lines_added": 0, "lines_deleted": 0, "files_changed": []}
+
+        return {"lines_added": 0, "lines_deleted": 0, "files_changed": []}
+
     def get_commits_for_issue(self, project_key, repo_slug, issue_key, max_retries=3):
         """
         Get commits related to a specific Jira issue with retry logic for rate limiting
