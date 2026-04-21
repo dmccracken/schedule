@@ -748,6 +748,57 @@ def match_developer(author_name, valid_developers, testers):
     return None
 
 
+def classify_rework(commit_author, commit_date, file_path, file_history, jira_issue_type, rework_window_days=30):
+    """
+    Classify rework signals for a commit touching a specific file.
+
+    Args:
+        commit_author: Normalized author name of current commit
+        commit_date: Datetime of current commit
+        file_path: Path of file being analyzed
+        file_history: Dict mapping file_path to list of (author, date) tuples
+        jira_issue_type: Issue type from Jira if commit references an issue, else None
+        rework_window_days: Number of days to look back for rework detection
+
+    Returns:
+        Dict of rework signals (all boolean)
+    """
+    from datetime import timedelta
+
+    signals = {
+        "file_churn": False,
+        "same_author": False,
+        "cross_author": False,
+        "bug_fix": False,
+    }
+
+    # Check if this is a bug fix based on Jira issue type
+    if jira_issue_type and jira_issue_type.lower() == "defect":
+        signals["bug_fix"] = True
+
+    # Get recent commits to this file within the rework window
+    recent_commits = []
+    if file_path in file_history:
+        cutoff_date = commit_date - timedelta(days=rework_window_days)
+        for author, date in file_history[file_path]:
+            if date >= cutoff_date and date < commit_date:
+                recent_commits.append((author, date))
+
+    # File churn: 3+ touches to same file within window (this would be the 3rd+)
+    if len(recent_commits) >= 2:
+        signals["file_churn"] = True
+
+    # Same-author rework: developer modified their own recent code
+    if any(author == commit_author for author, _ in recent_commits):
+        signals["same_author"] = True
+
+    # Cross-author rework: developer modified someone else's recent code
+    if any(author != commit_author for author, _ in recent_commits):
+        signals["cross_author"] = True
+
+    return signals
+
+
 def generate_release_notes_table(
     jira_client, bitbucket_client, components, include_commit_details=False
 ):
