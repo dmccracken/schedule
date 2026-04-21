@@ -1864,7 +1864,6 @@ def generate_bitbucket_charts(developer_metrics, created_after):
         created_after: Start date string for chart title
     """
     import plotly.graph_objects as go
-    from datetime import datetime
 
     if not developer_metrics:
         print("\nNo data available for charts")
