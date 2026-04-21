@@ -1796,7 +1796,7 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
                     try:
                         issue_details = jira_client.get_issue_details(issue_key)
                         if issue_details:
-                            jira_issue_cache[issue_key] = issue_details.get("fields", {}).get("issuetype", {}).get("name")
+                            jira_issue_cache[issue_key] = issue_details.get("type")
                         else:
                             jira_issue_cache[issue_key] = None
                     except Exception:
