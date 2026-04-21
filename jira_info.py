@@ -2042,6 +2042,12 @@ Examples:
         help="Output CSV file path (default: developer_velocity.csv)",
     )
 
+    parser.add_argument(
+        "--bitbucket-insights",
+        action="store_true",
+        help="Calculate developer metrics from BitBucket commits (requires --created-after)",
+    )
+
     args = parser.parse_args()
 
     # Create Jira client
@@ -2096,6 +2102,26 @@ Examples:
         )
         calculate_developer_velocity(client, args.created_after, args.output_file)
         sys.exit(0)
+
+    # Calculate BitBucket insights if requested
+    if args.bitbucket_insights:
+        if not args.created_after:
+            print(
+                "Error: --created-after is required for --bitbucket-insights",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"\nCalculating BitBucket insights for commits after {args.created_after}..."
+        )
+        bitbucket_client = BitBucketClient(
+            args.username, args.password, verify_ssl=not args.no_verify_ssl
+        )
+        calculate_bitbucket_insights(bitbucket_client, client, args.created_after)
+
+        # Exit if only bitbucket-insights was requested (not combined with other queries)
+        if not args.story_points_summary and not args.developer_velocity:
+            sys.exit(0)
 
     # Execute queries for backlog
     execute_component_queries(
