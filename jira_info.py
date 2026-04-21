@@ -1731,8 +1731,8 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
     # Jira issue key pattern
     jira_pattern = re.compile(r'ASE-\d+')
 
-    # Metrics aggregation
-    developer_metrics = defaultdict(lambda: {
+    # Monthly metrics aggregation: {(developer, period_start, period_end): metrics}
+    monthly_metrics = defaultdict(lambda: {
         "commits": 0,
         "lines_added": 0,
         "lines_deleted": 0,
@@ -1802,11 +1802,17 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
                     except Exception:
                         jira_issue_cache[issue_key] = None
                 jira_issue_type = jira_issue_cache.get(issue_key)
-            else:
-                developer_metrics[developer]["dark_commits"] += 1
 
             # Convert timestamp to datetime
             commit_date = datetime.fromtimestamp(commit["date"] / 1000)
+
+            # Get monthly period for this commit
+            period_start, period_end = get_velocity_period(commit_date)
+            group_key = (developer, period_start, period_end)
+
+            # Track dark commits (no Jira reference)
+            if not jira_matches:
+                monthly_metrics[group_key]["dark_commits"] += 1
 
             # Classify rework for each file
             is_rework = False
@@ -1825,18 +1831,18 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
                 # Update file history
                 file_history[file_path].append((dev_normalized, commit_date))
 
-            # Aggregate metrics
-            developer_metrics[developer]["commits"] += 1
-            developer_metrics[developer]["lines_added"] += diff_stats["lines_added"]
-            developer_metrics[developer]["lines_deleted"] += diff_stats["lines_deleted"]
-            developer_metrics[developer]["files_touched"].update(diff_stats["files_changed"])
-            developer_metrics[developer]["repos"][name] += 1
+            # Aggregate metrics by month
+            monthly_metrics[group_key]["commits"] += 1
+            monthly_metrics[group_key]["lines_added"] += diff_stats["lines_added"]
+            monthly_metrics[group_key]["lines_deleted"] += diff_stats["lines_deleted"]
+            monthly_metrics[group_key]["files_touched"].update(diff_stats["files_changed"])
+            monthly_metrics[group_key]["repos"][name] += 1
 
             if is_rework:
-                developer_metrics[developer]["rework_commits"] += 1
+                monthly_metrics[group_key]["rework_commits"] += 1
                 for signal, value in rework_signals.items():
                     if value:
-                        developer_metrics[developer]["rework_breakdown"][signal] += 1
+                        monthly_metrics[group_key]["rework_breakdown"][signal] += 1
 
     # Print summary
     print(f"\nBitBucket Insights ({created_after} to today):")
@@ -1844,104 +1850,245 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
     print(f"  Matched to developers: {matched_commits}")
     print(f"  Unmatched (excluded): {unmatched_commits}")
 
-    total_rework = sum(m["rework_commits"] for m in developer_metrics.values())
-    total_dark = sum(m["dark_commits"] for m in developer_metrics.values())
+    total_rework = sum(m["rework_commits"] for m in monthly_metrics.values())
+    total_dark = sum(m["dark_commits"] for m in monthly_metrics.values())
     rework_pct = (total_rework / matched_commits * 100) if matched_commits > 0 else 0
 
     print(f"  Rework commits: {total_rework} ({rework_pct:.1f}%)")
     print(f"  Dark commits (no Jira ref): {total_dark}")
 
-    # Generate charts (will be added in next task)
-    generate_bitbucket_charts(developer_metrics, created_after)
+    # Generate charts with monthly data
+    generate_bitbucket_charts(monthly_metrics, created_after)
 
 
-def generate_bitbucket_charts(developer_metrics, created_after):
+def generate_bitbucket_charts(monthly_metrics, created_after):
     """
-    Generate charts from BitBucket developer metrics.
+    Generate charts from BitBucket developer metrics, grouped by month.
 
     Args:
-        developer_metrics: Dict of developer -> metrics
+        monthly_metrics: Dict of (developer, period_start, period_end) -> metrics
         created_after: Start date string for chart title
     """
     import plotly.graph_objects as go
+    import plotly.express as px
+    from datetime import datetime
+    import calendar
 
-    if not developer_metrics:
+    if not monthly_metrics:
         print("\nNo data available for charts")
         return
 
-    # Prepare data
-    developers = sorted(developer_metrics.keys())
+    # Get current month to exclude incomplete data
+    current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    # Clean up names for display
-    display_names = [d.replace(" --CNTR", "") for d in developers]
+    # Build chart data
+    chart_data = []
+    for group_key, metrics in monthly_metrics.items():
+        developer, period_start, period_end = group_key
 
-    # Chart 1: Commits & Lines Changed
-    commits = [developer_metrics[d]["commits"] for d in developers]
-    lines_added = [developer_metrics[d]["lines_added"] for d in developers]
-    lines_deleted = [developer_metrics[d]["lines_deleted"] for d in developers]
+        # Skip current month (incomplete)
+        period_date = datetime.strptime(period_start, "%Y-%m-%d")
+        if period_date >= current_month_start:
+            continue
 
+        # Clean up developer name
+        display_name = developer.replace(" --CNTR", "")
+
+        # Format month for display
+        month_label = period_date.strftime("%b %Y")
+
+        chart_data.append({
+            "Developer": display_name,
+            "Month": month_label,
+            "Commits": metrics["commits"],
+            "Lines Added": metrics["lines_added"],
+            "Lines Deleted": metrics["lines_deleted"],
+            "Rework Commits": metrics["rework_commits"],
+            "File Churn": metrics["rework_breakdown"]["file_churn"],
+            "Bug Fix": metrics["rework_breakdown"]["bug_fix"],
+            "Same-Author Rework": metrics["rework_breakdown"]["same_author"],
+            "Cross-Author Rework": metrics["rework_breakdown"]["cross_author"],
+            "repos": metrics["repos"],
+            "sort_date": period_date,
+        })
+
+    if not chart_data:
+        print("\nNo data available for charts (no complete months)")
+        return
+
+    # Sort by date
+    chart_data.sort(key=lambda x: (x["sort_date"], x["Developer"]))
+
+    # Get unique developers and months
+    developers = sorted(set(d["Developer"] for d in chart_data))
+    months = sorted(set(d["Month"] for d in chart_data), key=lambda m: datetime.strptime(m, "%b %Y"))
+
+    # Get date range for titles
+    min_date = min(d["sort_date"] for d in chart_data)
+    max_date = max(d["sort_date"] for d in chart_data)
+    last_day = calendar.monthrange(max_date.year, max_date.month)[1]
+    end_date = max_date.replace(day=last_day)
+    date_range = f"({min_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')})"
+
+    # Color palette for months
+    colors = px.colors.qualitative.Plotly
+
+    # Build lookup by month
+    month_data = {}
+    for i, month in enumerate(months):
+        month_entries = [d for d in chart_data if d["Month"] == month]
+        dev_data = {d["Developer"]: d for d in month_entries}
+        month_data[month] = {
+            "commits": [dev_data.get(dev, {}).get("Commits", 0) for dev in developers],
+            "lines_added": [dev_data.get(dev, {}).get("Lines Added", 0) for dev in developers],
+            "lines_deleted": [dev_data.get(dev, {}).get("Lines Deleted", 0) for dev in developers],
+            "rework": [dev_data.get(dev, {}).get("Rework Commits", 0) for dev in developers],
+            "file_churn": [dev_data.get(dev, {}).get("File Churn", 0) for dev in developers],
+            "bug_fix": [dev_data.get(dev, {}).get("Bug Fix", 0) for dev in developers],
+            "same_author": [dev_data.get(dev, {}).get("Same-Author Rework", 0) for dev in developers],
+            "cross_author": [dev_data.get(dev, {}).get("Cross-Author Rework", 0) for dev in developers],
+            "color": colors[i % len(colors)],
+        }
+
+    # --- Chart 1: Commits by Month ---
     fig1 = go.Figure()
-    fig1.add_trace(go.Bar(name="Commits", x=display_names, y=commits, marker_color="#636EFA"))
-    fig1.add_trace(go.Bar(name="Lines Added", x=display_names, y=lines_added, marker_color="#00CC96"))
-    fig1.add_trace(go.Bar(name="Lines Deleted", x=display_names, y=lines_deleted, marker_color="#EF553B"))
+    for month in months:
+        fig1.add_trace(
+            go.Bar(
+                name=month,
+                x=developers,
+                y=month_data[month]["commits"],
+                text=month_data[month]["commits"],
+                textposition="outside",
+                texttemplate="%{text:.0f}",
+                marker_color=month_data[month]["color"],
+            )
+        )
 
     fig1.update_layout(
-        title=f"Developer Commits & Lines Changed (since {created_after})",
+        title=f"Developer Commits by Month {date_range}",
+        xaxis_tickangle=-45,
         xaxis_title="Developer",
-        yaxis_title="Count",
+        yaxis_title="Commits",
+        font=dict(size=12),
         barmode="group",
         width=1200,
-        height=500,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=600,
+        legend_title_text="Month",
     )
+
+    # Add vertical lines between developers
+    for i in range(len(developers) - 1):
+        fig1.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
+
     fig1.write_image("developer_commits.png")
     print("\nGenerated: developer_commits.png")
 
-    # Chart 2: Rework Analysis
-    rework_file_churn = [developer_metrics[d]["rework_breakdown"]["file_churn"] for d in developers]
-    rework_bug_fix = [developer_metrics[d]["rework_breakdown"]["bug_fix"] for d in developers]
-    rework_same_author = [developer_metrics[d]["rework_breakdown"]["same_author"] for d in developers]
-    rework_cross_author = [developer_metrics[d]["rework_breakdown"]["cross_author"] for d in developers]
-
+    # --- Chart 2: Rework Commits by Month ---
     fig2 = go.Figure()
-    fig2.add_trace(go.Bar(name="File Churn", x=display_names, y=rework_file_churn, marker_color="#636EFA"))
-    fig2.add_trace(go.Bar(name="Bug Fix", x=display_names, y=rework_bug_fix, marker_color="#EF553B"))
-    fig2.add_trace(go.Bar(name="Same-Author Rework", x=display_names, y=rework_same_author, marker_color="#FFA15A"))
-    fig2.add_trace(go.Bar(name="Cross-Author Rework", x=display_names, y=rework_cross_author, marker_color="#AB63FA"))
+    for month in months:
+        fig2.add_trace(
+            go.Bar(
+                name=month,
+                x=developers,
+                y=month_data[month]["rework"],
+                text=month_data[month]["rework"],
+                textposition="outside",
+                texttemplate="%{text:.0f}",
+                marker_color=month_data[month]["color"],
+            )
+        )
 
     fig2.update_layout(
-        title=f"Developer Rework Analysis (since {created_after})",
+        title=f"Developer Rework Commits by Month {date_range}",
+        xaxis_tickangle=-45,
         xaxis_title="Developer",
-        yaxis_title="Commits with Rework Signal",
-        barmode="stack",
+        yaxis_title="Rework Commits",
+        font=dict(size=12),
+        barmode="group",
         width=1200,
-        height=500,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=600,
+        legend_title_text="Month",
     )
+
+    for i in range(len(developers) - 1):
+        fig2.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
+
     fig2.write_image("developer_rework.png")
     print("Generated: developer_rework.png")
 
-    # Chart 3: Repository Distribution
-    repo_names = sorted(set(
-        repo for d in developers for repo in developer_metrics[d]["repos"].keys()
+    # --- Chart 3: Repository Distribution by Month ---
+    # Developers on X-axis, months as grouped bars, repos stacked within each bar
+    all_repos = sorted(set(
+        repo for d in chart_data for repo in d.get("repos", {}).keys()
     ))
 
+    # Build lookup: month -> developer -> repo -> count
+    month_repo_data = {}
+    for month in months:
+        month_entries = [d for d in chart_data if d["Month"] == month]
+        dev_repos = {}
+        for d in month_entries:
+            dev_repos[d["Developer"]] = d.get("repos", {})
+        month_repo_data[month] = dev_repos
+
+    # Calculate bar positions manually for grouped+stacked effect
+    num_months = len(months)
+    bar_width = 0.8 / num_months
+
+    # Assign consistent colors per repo
+    repo_colors = {repo: colors[i % len(colors)] for i, repo in enumerate(all_repos)}
+
     fig3 = go.Figure()
-    for repo in repo_names:
-        repo_commits = [developer_metrics[d]["repos"].get(repo, 0) for d in developers]
-        fig3.add_trace(go.Bar(name=repo, x=display_names, y=repo_commits))
+
+    # For each repo, add traces for each month (stacking happens per position)
+    for repo_idx, repo in enumerate(all_repos):
+        for month_idx, month in enumerate(months):
+            # Calculate x offset for this month's bars
+            offset = (month_idx - (num_months - 1) / 2) * bar_width
+            x_positions = [i + offset for i in range(len(developers))]
+
+            repo_commits = [month_repo_data[month].get(dev, {}).get(repo, 0) for dev in developers]
+
+            # Only show repo name in legend for first month to avoid duplicates
+            show_legend = month_idx == 0
+
+            fig3.add_trace(go.Bar(
+                name=repo if show_legend else None,
+                x=x_positions,
+                y=repo_commits,
+                width=bar_width,
+                legendgroup=repo,
+                showlegend=show_legend,
+                offsetgroup=month,
+                marker_color=repo_colors[repo],
+            ))
 
     fig3.update_layout(
-        title=f"Developer Repository Distribution (since {created_after})",
-        xaxis_title="Developer",
+        title=f"Developer Repository Distribution by Month {date_range}",
+        xaxis=dict(
+            tickmode="array",
+            tickvals=list(range(len(developers))),
+            ticktext=developers,
+            tickangle=-45,
+            title="Developer",
+        ),
         yaxis_title="Commits",
         barmode="stack",
         width=1200,
-        height=500,
+        height=600,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+
+    # Add vertical lines between developers
+    for i in range(len(developers) - 1):
+        fig3.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
+
     fig3.write_image("developer_repo_dist.png")
     print("Generated: developer_repo_dist.png")
+
+    print(f"\nDevelopers: {len(developers)}")
+    print(f"Months: {', '.join(months)}")
 
 
 def main():
