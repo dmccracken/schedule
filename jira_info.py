@@ -692,6 +692,62 @@ def get_velocity_period(date_obj):
     return period_start.strftime("%Y-%m-%d"), period_end.strftime("%Y-%m-%d")
 
 
+def normalize_name(name):
+    """
+    Normalize a developer name for comparison.
+
+    Args:
+        name: Developer display name
+
+    Returns:
+        Normalized lowercase name with suffixes removed
+    """
+    if not name:
+        return ""
+    name = name.lower().strip()
+    name = name.replace(" --cntr", "")
+    name = name.replace("--cntr", "")
+    return name
+
+
+def match_developer(author_name, valid_developers, testers):
+    """
+    Match a BitBucket author to a valid developer.
+
+    Args:
+        author_name: BitBucket commit author display name
+        valid_developers: List of valid developer names
+        testers: List of tester names to exclude
+
+    Returns:
+        Matched developer name, or None if no match or is a tester
+    """
+    import re
+
+    if not author_name:
+        return None
+
+    # Check if author is a tester (exclude)
+    for tester in testers:
+        if re.search(re.escape(tester), author_name, re.IGNORECASE):
+            return None
+
+    normalized = normalize_name(author_name)
+
+    # Try exact match first
+    for dev in valid_developers:
+        if normalize_name(dev) == normalized:
+            return dev
+
+    # Try partial match (substring in either direction)
+    for dev in valid_developers:
+        dev_normalized = normalize_name(dev)
+        if normalized in dev_normalized or dev_normalized in normalized:
+            return dev
+
+    return None
+
+
 def generate_release_notes_table(
     jira_client, bitbucket_client, components, include_commit_details=False
 ):
