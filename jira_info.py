@@ -76,6 +76,76 @@ class BitBucketClient:
 
         return None
 
+    def get_all_commits(self, project_key, repo_slug, since_date, max_retries=3):
+        """
+        Get all commits from a repository since a given date
+
+        Args:
+            project_key: BitBucket project key (e.g., 'FSSRPT')
+            repo_slug: Repository slug name
+            since_date: Date string (YYYY-MM-DD) to filter commits
+            max_retries: Maximum number of retry attempts for 429 errors
+
+        Returns:
+            List of commit dictionaries with author, date, message, and id
+        """
+        from datetime import datetime
+
+        base_url = "https://apg-bb.amat.com"
+        url = f"{base_url}/rest/api/1.0/projects/{project_key}/repos/{repo_slug}/commits"
+
+        # Convert since_date to timestamp (milliseconds)
+        since_dt = datetime.strptime(since_date, "%Y-%m-%d")
+        since_timestamp = int(since_dt.timestamp() * 1000)
+
+        for attempt in range(max_retries + 1):
+            try:
+                commits = []
+                start = 0
+                limit = 100
+
+                while True:
+                    params = {"limit": limit, "start": start}
+                    response = self.session.get(url, params=params)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    for commit in data.get("values", []):
+                        commit_timestamp = commit.get("authorTimestamp", 0)
+
+                        # Stop if we've gone past our date range
+                        if commit_timestamp < since_timestamp:
+                            return commits
+
+                        commits.append({
+                            "id": commit.get("id"),
+                            "author": commit.get("author", {}).get("displayName", "Unknown"),
+                            "email": commit.get("author", {}).get("emailAddress", ""),
+                            "date": commit_timestamp,
+                            "message": commit.get("message", ""),
+                        })
+
+                    if data.get("isLastPage", True):
+                        break
+                    start = data.get("nextPageStart", start + limit)
+
+                return commits
+
+            except requests.exceptions.RequestException as e:
+                if e.response is not None and e.response.status_code == 429:
+                    if attempt < max_retries:
+                        wait_time = (2**attempt) * 2
+                        print(
+                            f"Rate limited on {repo_slug}, waiting {wait_time}s before retry {attempt + 1}/{max_retries}...",
+                            file=sys.stderr,
+                        )
+                        time.sleep(wait_time)
+                        continue
+                print(f"Error fetching commits from {repo_slug}: {e}", file=sys.stderr)
+                return []
+
+        return []
+
     def get_commits_for_issue(self, project_key, repo_slug, issue_key, max_retries=3):
         """
         Get commits related to a specific Jira issue with retry logic for rate limiting
