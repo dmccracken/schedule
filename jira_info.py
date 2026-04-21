@@ -1855,6 +1855,96 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
     generate_bitbucket_charts(developer_metrics, created_after)
 
 
+def generate_bitbucket_charts(developer_metrics, created_after):
+    """
+    Generate charts from BitBucket developer metrics.
+
+    Args:
+        developer_metrics: Dict of developer -> metrics
+        created_after: Start date string for chart title
+    """
+    import plotly.graph_objects as go
+    from datetime import datetime
+
+    if not developer_metrics:
+        print("\nNo data available for charts")
+        return
+
+    # Prepare data
+    developers = sorted(developer_metrics.keys())
+
+    # Clean up names for display
+    display_names = [d.replace(" --CNTR", "") for d in developers]
+
+    # Chart 1: Commits & Lines Changed
+    commits = [developer_metrics[d]["commits"] for d in developers]
+    lines_added = [developer_metrics[d]["lines_added"] for d in developers]
+    lines_deleted = [developer_metrics[d]["lines_deleted"] for d in developers]
+
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(name="Commits", x=display_names, y=commits, marker_color="#636EFA"))
+    fig1.add_trace(go.Bar(name="Lines Added", x=display_names, y=lines_added, marker_color="#00CC96"))
+    fig1.add_trace(go.Bar(name="Lines Deleted", x=display_names, y=lines_deleted, marker_color="#EF553B"))
+
+    fig1.update_layout(
+        title=f"Developer Commits & Lines Changed (since {created_after})",
+        xaxis_title="Developer",
+        yaxis_title="Count",
+        barmode="group",
+        width=1200,
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    fig1.write_image("developer_commits.png")
+    print("\nGenerated: developer_commits.png")
+
+    # Chart 2: Rework Analysis
+    rework_file_churn = [developer_metrics[d]["rework_breakdown"]["file_churn"] for d in developers]
+    rework_bug_fix = [developer_metrics[d]["rework_breakdown"]["bug_fix"] for d in developers]
+    rework_same_author = [developer_metrics[d]["rework_breakdown"]["same_author"] for d in developers]
+    rework_cross_author = [developer_metrics[d]["rework_breakdown"]["cross_author"] for d in developers]
+
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(name="File Churn", x=display_names, y=rework_file_churn, marker_color="#636EFA"))
+    fig2.add_trace(go.Bar(name="Bug Fix", x=display_names, y=rework_bug_fix, marker_color="#EF553B"))
+    fig2.add_trace(go.Bar(name="Same-Author Rework", x=display_names, y=rework_same_author, marker_color="#FFA15A"))
+    fig2.add_trace(go.Bar(name="Cross-Author Rework", x=display_names, y=rework_cross_author, marker_color="#AB63FA"))
+
+    fig2.update_layout(
+        title=f"Developer Rework Analysis (since {created_after})",
+        xaxis_title="Developer",
+        yaxis_title="Commits with Rework Signal",
+        barmode="stack",
+        width=1200,
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    fig2.write_image("developer_rework.png")
+    print("Generated: developer_rework.png")
+
+    # Chart 3: Repository Distribution
+    repo_names = sorted(set(
+        repo for d in developers for repo in developer_metrics[d]["repos"].keys()
+    ))
+
+    fig3 = go.Figure()
+    for repo in repo_names:
+        repo_commits = [developer_metrics[d]["repos"].get(repo, 0) for d in developers]
+        fig3.add_trace(go.Bar(name=repo, x=display_names, y=repo_commits))
+
+    fig3.update_layout(
+        title=f"Developer Repository Distribution (since {created_after})",
+        xaxis_title="Developer",
+        yaxis_title="Commits",
+        barmode="stack",
+        width=1200,
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    fig3.write_image("developer_repo_dist.png")
+    print("Generated: developer_repo_dist.png")
+
+
 def main():
     """Main program entry point"""
     parser = argparse.ArgumentParser(
