@@ -1702,6 +1702,159 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
     print(f"Months: {', '.join(months)}")
 
 
+def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
+    """
+    Calculate developer insights from BitBucket commits.
+
+    Args:
+        bitbucket_client: BitBucketClient instance
+        jira_client: JiraClient instance for issue type lookups
+        created_after: Date string (YYYY-MM-DD) to filter commits
+    """
+    from collections import defaultdict
+    from datetime import datetime
+    import re
+
+    # Reuse tester and valid developer lists from velocity feature
+    testers = ["Allen Lai", "Henrik Schneider", "Michael Olstad", "Ryan Patz",
+               "Dennis", "Ramyaa", "Pavithra", "Tannu", "Lundi", "Minal", "Prajwal"]
+
+    valid_developers = [
+        "Hemalatha Mallala",
+        "Hemalatha Nallanna Gari",
+        "NAGARAJ B S",
+        "Roshini Jayalakshmi",
+        "SNEHA HA",
+        "Shashivardhan Manne",
+    ]
+
+    # Jira issue key pattern
+    jira_pattern = re.compile(r'ASE-\d+')
+
+    # Metrics aggregation
+    developer_metrics = defaultdict(lambda: {
+        "commits": 0,
+        "lines_added": 0,
+        "lines_deleted": 0,
+        "files_touched": set(),
+        "rework_commits": 0,
+        "dark_commits": 0,
+        "rework_breakdown": defaultdict(int),
+        "repos": defaultdict(int),
+    })
+
+    # File history for rework detection: {file_path: [(author, date), ...]}
+    file_history = defaultdict(list)
+
+    # Cache for Jira issue types
+    jira_issue_cache = {}
+
+    # Statistics
+    total_commits = 0
+    matched_commits = 0
+    unmatched_commits = 0
+
+    print(f"\nFetching commits from {len(BITBUCKET_REPOS)} repositories...")
+
+    for repo in BITBUCKET_REPOS:
+        project = repo["project"]
+        slug = repo["slug"]
+        name = repo["name"]
+
+        print(f"  Processing {name}...")
+        commits = bitbucket_client.get_all_commits(project, slug, created_after)
+        print(f"    Found {len(commits)} commits")
+
+        # Add small delay between repos to avoid rate limiting
+        time.sleep(0.5)
+
+        for commit in commits:
+            total_commits += 1
+
+            # Match developer
+            author = commit["author"]
+            developer = match_developer(author, valid_developers, testers)
+
+            if not developer:
+                unmatched_commits += 1
+                continue
+
+            matched_commits += 1
+            dev_normalized = normalize_name(developer)
+
+            # Get diff stats
+            diff_stats = bitbucket_client.get_commit_diff_stats(project, slug, commit["id"])
+
+            # Check for Jira issue reference
+            message = commit.get("message", "")
+            jira_matches = jira_pattern.findall(message)
+            jira_issue_type = None
+
+            if jira_matches:
+                issue_key = jira_matches[0]
+                if issue_key not in jira_issue_cache:
+                    try:
+                        issue_details = jira_client.get_issue_details(issue_key)
+                        if issue_details:
+                            jira_issue_cache[issue_key] = issue_details.get("fields", {}).get("issuetype", {}).get("name")
+                        else:
+                            jira_issue_cache[issue_key] = None
+                    except Exception:
+                        jira_issue_cache[issue_key] = None
+                jira_issue_type = jira_issue_cache.get(issue_key)
+            else:
+                developer_metrics[developer]["dark_commits"] += 1
+
+            # Convert timestamp to datetime
+            commit_date = datetime.fromtimestamp(commit["date"] / 1000)
+
+            # Classify rework for each file
+            is_rework = False
+            rework_signals = {"file_churn": False, "same_author": False, "cross_author": False, "bug_fix": False}
+
+            for file_path in diff_stats["files_changed"]:
+                file_signals = classify_rework(
+                    dev_normalized, commit_date, file_path, file_history, jira_issue_type
+                )
+                # Merge signals (OR logic)
+                for signal, value in file_signals.items():
+                    if value:
+                        rework_signals[signal] = True
+                        is_rework = True
+
+                # Update file history
+                file_history[file_path].append((dev_normalized, commit_date))
+
+            # Aggregate metrics
+            developer_metrics[developer]["commits"] += 1
+            developer_metrics[developer]["lines_added"] += diff_stats["lines_added"]
+            developer_metrics[developer]["lines_deleted"] += diff_stats["lines_deleted"]
+            developer_metrics[developer]["files_touched"].update(diff_stats["files_changed"])
+            developer_metrics[developer]["repos"][name] += 1
+
+            if is_rework:
+                developer_metrics[developer]["rework_commits"] += 1
+                for signal, value in rework_signals.items():
+                    if value:
+                        developer_metrics[developer]["rework_breakdown"][signal] += 1
+
+    # Print summary
+    print(f"\nBitBucket Insights ({created_after} to today):")
+    print(f"  Total commits analyzed: {total_commits}")
+    print(f"  Matched to developers: {matched_commits}")
+    print(f"  Unmatched (excluded): {unmatched_commits}")
+
+    total_rework = sum(m["rework_commits"] for m in developer_metrics.values())
+    total_dark = sum(m["dark_commits"] for m in developer_metrics.values())
+    rework_pct = (total_rework / matched_commits * 100) if matched_commits > 0 else 0
+
+    print(f"  Rework commits: {total_rework} ({rework_pct:.1f}%)")
+    print(f"  Dark commits (no Jira ref): {total_dark}")
+
+    # Generate charts (will be added in next task)
+    generate_bitbucket_charts(developer_metrics, created_after)
+
+
 def main():
     """Main program entry point"""
     parser = argparse.ArgumentParser(
