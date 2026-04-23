@@ -276,6 +276,78 @@ class BitBucketClient:
 
         return []
 
+    def get_pull_requests(self, project_key, repo_slug, since_date, max_retries=3):
+        """
+        Get merged pull requests from a repository since a given date
+
+        Args:
+            project_key: BitBucket project key (e.g., 'FSSRPT')
+            repo_slug: Repository slug name
+            since_date: Date string (YYYY-MM-DD) to filter PRs
+            max_retries: Maximum number of retry attempts for 429 errors
+
+        Returns:
+            List of PR dictionaries with author, date, title, and id
+        """
+        from datetime import datetime
+
+        base_url = "https://apg-bb.amat.com"
+        url = f"{base_url}/rest/api/1.0/projects/{project_key}/repos/{repo_slug}/pull-requests"
+
+        # Convert since_date to timestamp (milliseconds)
+        since_dt = datetime.strptime(since_date, "%Y-%m-%d")
+        since_timestamp = int(since_dt.timestamp() * 1000)
+
+        for attempt in range(max_retries + 1):
+            try:
+                pull_requests = []
+                start = 0
+                limit = 100
+
+                while True:
+                    params = {"limit": limit, "start": start, "state": "MERGED"}
+                    response = self.session.get(url, params=params)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    for pr in data.get("values", []):
+                        # Use updatedDate as proxy for merge date
+                        pr_timestamp = pr.get("updatedDate", 0)
+
+                        # Stop if we've gone past our date range
+                        if pr_timestamp < since_timestamp:
+                            return pull_requests
+
+                        author_info = pr.get("author", {}).get("user", {})
+                        pull_requests.append({
+                            "id": pr.get("id"),
+                            "title": pr.get("title", ""),
+                            "author": author_info.get("displayName", "Unknown"),
+                            "date": pr_timestamp,
+                            "state": pr.get("state"),
+                        })
+
+                    if data.get("isLastPage", True):
+                        break
+                    start = data.get("nextPageStart", start + limit)
+
+                return pull_requests
+
+            except requests.exceptions.RequestException as e:
+                if e.response is not None and e.response.status_code == 429:
+                    if attempt < max_retries:
+                        wait_time = (2**attempt) * 2
+                        print(
+                            f"Rate limited on PRs for {repo_slug}, waiting {wait_time}s before retry {attempt + 1}/{max_retries}...",
+                            file=sys.stderr,
+                        )
+                        time.sleep(wait_time)
+                        continue
+                print(f"Error fetching PRs from {repo_slug}: {e}", file=sys.stderr)
+                return []
+
+        return []
+
 
 class JiraClient:
     """Client for interacting with Jira Data Center REST API"""
@@ -1133,6 +1205,31 @@ BITBUCKET_REPOS = [
     {"project": "FSSRPT", "slug": "pts_dashboard", "name": "PTS Dashboard"},
 ]
 
+# Testers and excluded people should not be credited with development work
+TESTERS = [
+    "Allen Lai",
+    "Henrik Schneider",
+    "Michael Olstad",
+    "Ryan Patz",
+    "Dennis",
+    "Minal",
+]
+
+# Valid developers who should be credited
+VALID_DEVELOPERS = [
+    "Hemalatha Mallala",
+    "Hemalatha Nallanna Gari",
+    "NAGARAJ B S",
+    "Roshini Jayalakshmi",
+    "SNEHA HA",
+    "Shashivardhan Manne",
+    "Pavithra",
+    "Tannu",
+    "Lundi",
+    "Prajwal",
+    "Ramyaa",
+]
+
 COMMON_JQL_BACKLOG_PREFIX = (
     "project = ASE and status = new and fixVersion is EMPTY and component ="
 )
@@ -1305,7 +1402,7 @@ def execute_component_queries(
     return story_points_data
 
 
-def calculate_developer_velocity(jira_client, created_after, output_file):
+def calculate_developer_velocity(jira_client, created_after, output_file, max_results):
     """
     Calculate developer velocity (story points per month) for closed issues
 
@@ -1325,7 +1422,7 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
     print(f"Executing JQL: {jql}")
 
     # Fetch issues with changelog
-    issues = jira_client.search_issues_with_changelog(jql)
+    issues = jira_client.search_issues_with_changelog(jql, max_results=max_results)
     print(f"Found {len(issues)} closed issues")
 
     # Track velocity data per month: {(developer, period_start, period_end): {issues, points}}
@@ -1341,20 +1438,6 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
     # Debug: track issues attributed to specific people for investigation
     debug_names = ["Allen Lai", "Henrik Schneider", "Michael Olstad"]
     debug_issues = []
-
-    # Testers and excluded people should not be credited with development work (story points)
-    testers = ["Allen Lai", "Henrik Schneider", "Michael Olstad", "Ryan Patz",
-               "Dennis", "Ramyaa", "Pavithra", "Tannu", "Lundi", "Minal", "Prajwal"]
-
-    # Valid developers (contractors) who should be credited
-    valid_developers = [
-        "Hemalatha Mallala",
-        "Hemalatha Nallanna Gari",
-        "NAGARAJ B S",
-        "Roshini Jayalakshmi",
-        "SNEHA HA",
-        "Shashivardhan Manne",
-    ]
 
     # Track issues reassigned from testers to developers
     reassigned_issues = []
@@ -1403,11 +1486,11 @@ def calculate_developer_velocity(jira_client, created_after, output_file):
 
         # Check if the developer is a tester - if so, find last valid developer from history
         import re
-        is_tester = any(re.search(re.escape(t), developer, re.IGNORECASE) for t in testers)
+        is_tester = any(re.search(re.escape(t), developer, re.IGNORECASE) for t in TESTERS)
 
         if is_tester:
             assignee_history = transition_dates.get("assignee_history", [])
-            valid_developer = find_last_valid_developer(assignee_history, valid_developers, testers)
+            valid_developer = find_last_valid_developer(assignee_history, VALID_DEVELOPERS, TESTERS)
 
             if valid_developer:
                 reassigned_issues.append({
@@ -1715,19 +1798,6 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
     from datetime import datetime
     import re
 
-    # Reuse tester and valid developer lists from velocity feature
-    testers = ["Allen Lai", "Henrik Schneider", "Michael Olstad", "Ryan Patz",
-               "Dennis", "Ramyaa", "Pavithra", "Tannu", "Lundi", "Minal", "Prajwal"]
-
-    valid_developers = [
-        "Hemalatha Mallala",
-        "Hemalatha Nallanna Gari",
-        "NAGARAJ B S",
-        "Roshini Jayalakshmi",
-        "SNEHA HA",
-        "Shashivardhan Manne",
-    ]
-
     # Jira issue key pattern
     jira_pattern = re.compile(r'ASE-\d+')
 
@@ -1773,7 +1843,7 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
 
             # Match developer
             author = commit["author"]
-            developer = match_developer(author, valid_developers, testers)
+            developer = match_developer(author, VALID_DEVELOPERS, TESTERS)
 
             if not developer:
                 unmatched_commits += 1
@@ -1857,16 +1927,63 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
     print(f"  Rework commits: {total_rework} ({rework_pct:.1f}%)")
     print(f"  Dark commits (no Jira ref): {total_dark}")
 
+    # Fetch pull request data
+    print(f"\nFetching pull requests from {len(BITBUCKET_REPOS)} repositories...")
+
+    # Monthly PR metrics: {(developer, period_start, period_end): pr_count}
+    # Also track total PRs per month: {period_start: pr_count}
+    monthly_pr_metrics = defaultdict(int)
+    monthly_pr_totals = defaultdict(int)
+    total_prs = 0
+    matched_prs = 0
+
+    for repo in BITBUCKET_REPOS:
+        project = repo["project"]
+        slug = repo["slug"]
+        name = repo["name"]
+
+        print(f"  Processing {name}...")
+        pull_requests = bitbucket_client.get_pull_requests(project, slug, created_after)
+        print(f"    Found {len(pull_requests)} merged PRs")
+
+        time.sleep(0.5)
+
+        for pr in pull_requests:
+            total_prs += 1
+
+            # Match developer
+            author = pr["author"]
+            developer = match_developer(author, VALID_DEVELOPERS, TESTERS)
+
+            # Convert timestamp to datetime
+            pr_date = datetime.fromtimestamp(pr["date"] / 1000)
+            period_start, period_end = get_velocity_period(pr_date)
+
+            # Track total PRs per month (regardless of developer match)
+            monthly_pr_totals[period_start] += 1
+
+            if not developer:
+                continue
+
+            matched_prs += 1
+            group_key = (developer, period_start, period_end)
+            monthly_pr_metrics[group_key] += 1
+
+    print(f"\n  Total PRs analyzed: {total_prs}")
+    print(f"  Matched to developers: {matched_prs}")
+
     # Generate charts with monthly data
-    generate_bitbucket_charts(monthly_metrics, created_after)
+    generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_totals, created_after)
 
 
-def generate_bitbucket_charts(monthly_metrics, created_after):
+def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_totals, created_after):
     """
     Generate charts from BitBucket developer metrics, grouped by month.
 
     Args:
         monthly_metrics: Dict of (developer, period_start, period_end) -> metrics
+        monthly_pr_metrics: Dict of (developer, period_start, period_end) -> pr_count
+        monthly_pr_totals: Dict of period_start -> total_pr_count
         created_after: Start date string for chart title
     """
     import plotly.graph_objects as go
@@ -2087,6 +2204,114 @@ def generate_bitbucket_charts(monthly_metrics, created_after):
     fig3.write_image("developer_repo_dist.png")
     print("Generated: developer_repo_dist.png")
 
+    # --- Chart 4: Total Pull Requests by Month ---
+    # Build PR totals data, excluding current month
+    pr_months = []
+    pr_totals = []
+    for period_start in sorted(monthly_pr_totals.keys()):
+        period_date = datetime.strptime(period_start, "%Y-%m-%d")
+        if period_date >= current_month_start:
+            continue
+        month_label = period_date.strftime("%b %Y")
+        pr_months.append(month_label)
+        pr_totals.append(monthly_pr_totals[period_start])
+
+    if pr_months:
+        fig4 = go.Figure()
+        fig4.add_trace(
+            go.Scatter(
+                x=pr_months,
+                y=pr_totals,
+                mode="lines+markers+text",
+                text=pr_totals,
+                textposition="top center",
+                texttemplate="%{text:.0f}",
+                line=dict(color="#636EFA", width=2),
+                marker=dict(size=8),
+            )
+        )
+
+        fig4.update_layout(
+            title=f"Total Pull Requests by Month {date_range}",
+            xaxis_tickangle=-45,
+            xaxis_title="Month",
+            yaxis_title="Pull Requests",
+            font=dict(size=12),
+            width=1200,
+            height=600,
+        )
+
+        fig4.write_image("total_pull_requests.png")
+        print("Generated: total_pull_requests.png")
+
+    # --- Chart 5: Pull Requests by Developer by Month ---
+    # Build PR data per developer per month
+    pr_chart_data = []
+    for group_key, pr_count in monthly_pr_metrics.items():
+        developer, period_start, period_end = group_key
+
+        period_date = datetime.strptime(period_start, "%Y-%m-%d")
+        if period_date >= current_month_start:
+            continue
+
+        display_name = developer.replace(" --CNTR", "")
+        month_label = period_date.strftime("%b %Y")
+
+        pr_chart_data.append({
+            "Developer": display_name,
+            "Month": month_label,
+            "PRs": pr_count,
+            "sort_date": period_date,
+        })
+
+    if pr_chart_data:
+        pr_chart_data.sort(key=lambda x: (x["sort_date"], x["Developer"]))
+
+        pr_developers = sorted(set(d["Developer"] for d in pr_chart_data))
+        pr_months_list = sorted(set(d["Month"] for d in pr_chart_data), key=lambda m: datetime.strptime(m, "%b %Y"))
+
+        # Build lookup by month for PRs
+        pr_month_data = {}
+        for i, month in enumerate(pr_months_list):
+            month_entries = [d for d in pr_chart_data if d["Month"] == month]
+            dev_prs = {d["Developer"]: d["PRs"] for d in month_entries}
+            pr_month_data[month] = {
+                "prs": [dev_prs.get(dev, 0) for dev in pr_developers],
+                "color": colors[i % len(colors)],
+            }
+
+        fig5 = go.Figure()
+        for month in pr_months_list:
+            fig5.add_trace(
+                go.Bar(
+                    name=month,
+                    x=pr_developers,
+                    y=pr_month_data[month]["prs"],
+                    text=pr_month_data[month]["prs"],
+                    textposition="outside",
+                    texttemplate="%{text:.0f}",
+                    marker_color=pr_month_data[month]["color"],
+                )
+            )
+
+        fig5.update_layout(
+            title=f"Developer Pull Requests by Month {date_range}",
+            xaxis_tickangle=-45,
+            xaxis_title="Developer",
+            yaxis_title="Pull Requests",
+            font=dict(size=12),
+            barmode="group",
+            width=1200,
+            height=600,
+            legend_title_text="Month",
+        )
+
+        for i in range(len(pr_developers) - 1):
+            fig5.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
+
+        fig5.write_image("developer_pull_requests.png")
+        print("Generated: developer_pull_requests.png")
+
     print(f"\nDevelopers: {len(developers)}")
     print(f"Months: {', '.join(months)}")
 
@@ -2247,7 +2472,7 @@ Examples:
         print(
             f"\nCalculating developer velocity for issues created after {args.created_after}..."
         )
-        calculate_developer_velocity(client, args.created_after, args.output_file)
+        calculate_developer_velocity(client, args.created_after, args.output_file, args.max_results)
         sys.exit(0)
 
     # Calculate BitBucket insights if requested
