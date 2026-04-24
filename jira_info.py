@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 from urllib.parse import urljoin
 from requests.auth import HTTPBasicAuth
+from staffing import get_monthly_headcount, get_staffing_date_range
 
 
 class BitBucketClient:
@@ -2258,34 +2259,83 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
         fig3.write_image("developer_repo_dist.png")
         print("Generated: developer_repo_dist.png")
 
-    # --- Chart 4: Total Pull Requests by Month ---
+    # --- Chart 4: Total Pull Requests by Month with Staffing Overlay ---
     # Build PR totals data, excluding current month
     pr_months = []
-    pr_totals = []
+    pr_month_to_total = {}
     for period_start in sorted(monthly_pr_totals.keys()):
         period_date = datetime.strptime(period_start, "%Y-%m-%d")
         if period_date >= current_month_start:
             continue
         month_label = period_date.strftime("%b %Y")
         pr_months.append(month_label)
-        pr_totals.append(monthly_pr_totals[period_start])
+        pr_month_to_total[month_label] = monthly_pr_totals[period_start]
 
-    if pr_months:
+    # Try to load staffing data
+    staffing_data = {}
+    try:
+        staffing_start, staffing_end = get_staffing_date_range("AMAT Developer Project Duration.xlsx")
+
+        pr_start = datetime.strptime(created_after, "%Y-%m-%d").strftime("%Y-%m") if created_after else None
+
+        if pr_start and pr_start < staffing_start:
+            combined_start = pr_start
+        else:
+            combined_start = staffing_start
+
+        current_month = datetime.now().strftime("%Y-%m")
+        if staffing_end > current_month:
+            combined_end = current_month
+        else:
+            combined_end = staffing_end
+
+        staffing_data = get_monthly_headcount(
+            "AMAT Developer Project Duration.xlsx",
+            combined_start,
+            combined_end,
+        )
+    except FileNotFoundError:
+        print("Warning: AMAT Developer Project Duration.xlsx not found, skipping staffing overlay")
+    except Exception as e:
+        print(f"Warning: Could not load staffing data: {e}")
+
+    if pr_months or staffing_data:
+        all_months = set(pr_months) | set(staffing_data.keys())
+        all_months_sorted = sorted(all_months, key=lambda m: datetime.strptime(m, "%b %Y"))
+
+        final_pr_totals = [pr_month_to_total.get(m, 0) for m in all_months_sorted]
+        final_headcounts = [staffing_data.get(m, 0) for m in all_months_sorted]
+
         fig4 = go.Figure()
+
         fig4.add_trace(
             go.Scatter(
-                x=pr_months,
-                y=pr_totals,
+                x=all_months_sorted,
+                y=final_pr_totals,
                 mode="lines+markers+text",
-                text=pr_totals,
+                text=final_pr_totals,
                 textposition="top center",
                 texttemplate="%{text:.0f}",
                 line=dict(color="#636EFA", width=2),
                 marker=dict(size=8),
+                name="Pull Requests",
             )
         )
 
-        fig4.update_layout(
+        if staffing_data:
+            fig4.add_trace(
+                go.Scatter(
+                    x=all_months_sorted,
+                    y=final_headcounts,
+                    mode="lines+markers",
+                    line=dict(color="#FFA500", width=2, shape="hv"),
+                    marker=dict(size=6),
+                    name="Resources",
+                    yaxis="y2",
+                )
+            )
+
+        layout_config = dict(
             title=f"Total Pull Requests by Month {date_range}",
             xaxis_tickangle=-45,
             xaxis_title="Month",
@@ -2294,6 +2344,22 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
             width=1200,
             height=600,
         )
+
+        if staffing_data:
+            layout_config["yaxis2"] = dict(
+                title="Resources",
+                overlaying="y",
+                side="right",
+            )
+            layout_config["legend"] = dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+            )
+
+        fig4.update_layout(**layout_config)
 
         fig4.write_image("total_pull_requests.png")
         print("Generated: total_pull_requests.png")
