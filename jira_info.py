@@ -514,8 +514,14 @@ def format_issue_output(issue):
     return f"  [{key}] {summary}\n    Status: {status} | Priority: {priority} | Assignee: {assignee_name}"
 
 
-def extract_story_points_data(results, print_jira_issues=False):
-    """Extract story points, issue key, and component from results"""
+def extract_story_points_data(results, print_jira_issues=False, version=None):
+    """Extract story points, issue key, component, and version from results
+
+    Args:
+        results: Jira search results
+        print_jira_issues: Whether to print individual issues
+        version: Version string from the query context (for aggregation)
+    """
     story_points_data = []
 
     if not results:
@@ -543,6 +549,7 @@ def extract_story_points_data(results, print_jira_issues=False):
                 "key": key,
                 "story_points": story_points if story_points is not None else "Not Set",
                 "components": ", ".join(component_names),
+                "version": version,
             }
         )
 
@@ -1041,10 +1048,18 @@ def generate_release_notes_table(
 
 
 def print_story_points_summary(
-    all_story_points_data, query_description="", details=False
+    all_story_points_data, query_description="", details=False, components=None, use_version=False
 ):
+    """Print a formatted summary of story points across all queries
+
+    Args:
+        all_story_points_data: List of story points data dictionaries
+        query_description: Description for the report header
+        details: Whether to print individual issue details
+        components: List of component dictionaries (to show zero-result components)
+        use_version: Whether version filtering was used (to determine which components to show)
+    """
     if details:
-        """Print a formatted summary of story points across all queries"""
         print(f"\n{'='*80}")
         print(f"{query_description} STORY POINTS SUMMARY")
         print(f"{'='*80}\n")
@@ -1055,18 +1070,33 @@ def print_story_points_summary(
 
     total_points = 0
     issues_with_points = 0
-    component_totals = {}  # Track story points by component
+    component_totals = {}  # Track story points by (component, version)
+
+    # Pre-populate with all expected components (so zero-result ones appear)
+    if components:
+        for comp in components:
+            # Skip components without version if version filtering was used
+            if use_version and comp.get("version") is None:
+                continue
+            # Use Jira component name as the key (matches what extract_story_points_data returns)
+            agg_key = (comp["component"], comp.get("version"))
+            component_totals[agg_key] = {"points": 0, "count": 0}
 
     for data in all_story_points_data:
         key = data["key"]
         points = data["story_points"]
         components = data["components"]
+        version = data.get("version")
+
+        # Use (component, version) as aggregation key
+        agg_key = (components, version)
 
         # Format story points for display
         points_display = str(points) if points != "Not Set" else "Not Set"
 
         if details:
-            print(f"{key:<15} {points_display:<15} {components}")
+            version_display = f" [{version}]" if version else ""
+            print(f"{key:<15} {points_display:<15} {components}{version_display}")
 
         # Calculate totals
         if points != "Not Set":
@@ -1074,26 +1104,29 @@ def print_story_points_summary(
             total_points += points_value
             issues_with_points += 1
 
-            # Track by component
-            if components not in component_totals:
-                component_totals[components] = {"points": 0, "count": 0}
-            component_totals[components]["points"] += points_value
-            component_totals[components]["count"] += 1
+            # Track by (component, version)
+            if agg_key not in component_totals:
+                component_totals[agg_key] = {"points": 0, "count": 0}
+            component_totals[agg_key]["points"] += points_value
+            component_totals[agg_key]["count"] += 1
         else:
             # Ensure component is tracked even if no points
-            if components not in component_totals:
-                component_totals[components] = {"points": 0, "count": 0}
-            component_totals[components]["count"] += 1  # Count issue even if no points
+            if agg_key not in component_totals:
+                component_totals[agg_key] = {"points": 0, "count": 0}
+            component_totals[agg_key]["count"] += 1  # Count issue even if no points
 
     # Print component totals
     print(f"\n{'-'*80}")
     print(f"{query_description} STORY POINTS BY COMPONENT")
     print(f"{'-'*80}")
-    for component in sorted(component_totals.keys()):
-        comp_data = component_totals[component]
+    for agg_key in sorted(component_totals.keys(), key=lambda x: (x[0], x[1] or "")):
+        component, version = agg_key
+        comp_data = component_totals[agg_key]
         points_str = f"{comp_data['points']:.1f} points"
         issues_str = f"({comp_data['count']} issues)"
-        print(f"{component:<40} {points_str:>12} {issues_str}")
+        # Display component with version if available
+        display_name = f"{component} [{version}]" if version else component
+        print(f"{display_name:<50} {points_str:>12} {issues_str}")
 
     # Print summary statistics
     print(f"\n{'-'*80}")
@@ -1152,8 +1185,13 @@ COMPONENTS = [
     {
         "component": "DES",
         "name": "DES Dashboard",
+        "version": "DES_V2",
+        "release_notes": None,
+    },
+    {
+        "component": "DES",
+        "name": "DES Dashboard",
         "version": "DES_V26.05",
-        #"version": "DES_V2",
         "release_notes": None,
     },
     # {
@@ -1165,7 +1203,12 @@ COMPONENTS = [
     {
         "component": "PPTS",
         "name": "PPTS Dashboard",
-        #"version": "PPTS_26.03",
+        "version": "PPTS_26.03",
+        "release_notes": "https://apg-bb.amat.com/projects/FSSRPT/repos/pts_dashboard/browse/ReleaseNotes.txt",
+    },
+    {
+        "component": "PPTS",
+        "name": "PPTS Dashboard",
         "version": "PPTS_26.07",
         "release_notes": "https://apg-bb.amat.com/projects/FSSRPT/repos/pts_dashboard/browse/ReleaseNotes.txt",
     },
@@ -1385,7 +1428,7 @@ def execute_component_queries(
         # Process results
         if story_points_summary:
             component_story_points = extract_story_points_data(
-                results, print_jira_issues=print_jira_issues
+                results, print_jira_issues=print_jira_issues, version=component.get("version")
             )
             story_points_data.extend(component_story_points)
         else:
@@ -1396,7 +1439,10 @@ def execute_component_queries(
     # Print summary if requested
     if story_points_summary:
         print_story_points_summary(
-            story_points_data, query_description=query_description
+            story_points_data,
+            query_description=query_description,
+            components=components,
+            use_version=use_version,
         )
 
     return story_points_data
@@ -1785,14 +1831,15 @@ def calculate_developer_velocity(jira_client, created_after, output_file, max_re
     print(f"Months: {', '.join(months)}")
 
 
-def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
+def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after, include_commits=False):
     """
-    Calculate developer insights from BitBucket commits.
+    Calculate developer insights from BitBucket commits and pull requests.
 
     Args:
         bitbucket_client: BitBucketClient instance
         jira_client: JiraClient instance for issue type lookups
         created_after: Date string (YYYY-MM-DD) to filter commits
+        include_commits: If True, fetch and analyze commit data (slower)
     """
     from collections import defaultdict
     from datetime import datetime
@@ -1813,119 +1860,121 @@ def calculate_bitbucket_insights(bitbucket_client, jira_client, created_after):
         "repos": defaultdict(int),
     })
 
-    # File history for rework detection: {file_path: [(author, date), ...]}
-    file_history = defaultdict(list)
+    # Commit analysis (optional, slower)
+    if include_commits:
+        # File history for rework detection: {file_path: [(author, date), ...]}
+        file_history = defaultdict(list)
 
-    # Cache for Jira issue types
-    jira_issue_cache = {}
+        # Cache for Jira issue types
+        jira_issue_cache = {}
 
-    # Statistics
-    total_commits = 0
-    matched_commits = 0
-    unmatched_commits = 0
+        # Statistics
+        total_commits = 0
+        matched_commits = 0
+        unmatched_commits = 0
 
-    print(f"\nFetching commits from {len(BITBUCKET_REPOS)} repositories...")
+        print(f"\nFetching commits from {len(BITBUCKET_REPOS)} repositories...")
 
-    for repo in BITBUCKET_REPOS:
-        project = repo["project"]
-        slug = repo["slug"]
-        name = repo["name"]
+        for repo in BITBUCKET_REPOS:
+            project = repo["project"]
+            slug = repo["slug"]
+            name = repo["name"]
 
-        print(f"  Processing {name}...")
-        commits = bitbucket_client.get_all_commits(project, slug, created_after)
-        print(f"    Found {len(commits)} commits")
+            print(f"  Processing {name}...")
+            commits = bitbucket_client.get_all_commits(project, slug, created_after)
+            print(f"    Found {len(commits)} commits")
 
-        # Add small delay between repos to avoid rate limiting
-        time.sleep(0.5)
+            # Add small delay between repos to avoid rate limiting
+            time.sleep(0.5)
 
-        for commit in commits:
-            total_commits += 1
+            for commit in commits:
+                total_commits += 1
 
-            # Match developer
-            author = commit["author"]
-            developer = match_developer(author, VALID_DEVELOPERS, TESTERS)
+                # Match developer
+                author = commit["author"]
+                developer = match_developer(author, VALID_DEVELOPERS, TESTERS)
 
-            if not developer:
-                unmatched_commits += 1
-                continue
+                if not developer:
+                    unmatched_commits += 1
+                    continue
 
-            matched_commits += 1
-            dev_normalized = normalize_name(developer)
+                matched_commits += 1
+                dev_normalized = normalize_name(developer)
 
-            # Get diff stats
-            diff_stats = bitbucket_client.get_commit_diff_stats(project, slug, commit["id"])
+                # Get diff stats
+                diff_stats = bitbucket_client.get_commit_diff_stats(project, slug, commit["id"])
 
-            # Check for Jira issue reference
-            message = commit.get("message", "")
-            jira_matches = jira_pattern.findall(message)
-            jira_issue_type = None
+                # Check for Jira issue reference
+                message = commit.get("message", "")
+                jira_matches = jira_pattern.findall(message)
+                jira_issue_type = None
 
-            if jira_matches:
-                issue_key = jira_matches[0]
-                if issue_key not in jira_issue_cache:
-                    try:
-                        issue_details = jira_client.get_issue_details(issue_key)
-                        if issue_details:
-                            jira_issue_cache[issue_key] = issue_details.get("type")
-                        else:
+                if jira_matches:
+                    issue_key = jira_matches[0]
+                    if issue_key not in jira_issue_cache:
+                        try:
+                            issue_details = jira_client.get_issue_details(issue_key)
+                            if issue_details:
+                                jira_issue_cache[issue_key] = issue_details.get("type")
+                            else:
+                                jira_issue_cache[issue_key] = None
+                        except Exception:
                             jira_issue_cache[issue_key] = None
-                    except Exception:
-                        jira_issue_cache[issue_key] = None
-                jira_issue_type = jira_issue_cache.get(issue_key)
+                    jira_issue_type = jira_issue_cache.get(issue_key)
 
-            # Convert timestamp to datetime
-            commit_date = datetime.fromtimestamp(commit["date"] / 1000)
+                # Convert timestamp to datetime
+                commit_date = datetime.fromtimestamp(commit["date"] / 1000)
 
-            # Get monthly period for this commit
-            period_start, period_end = get_velocity_period(commit_date)
-            group_key = (developer, period_start, period_end)
+                # Get monthly period for this commit
+                period_start, period_end = get_velocity_period(commit_date)
+                group_key = (developer, period_start, period_end)
 
-            # Track dark commits (no Jira reference)
-            if not jira_matches:
-                monthly_metrics[group_key]["dark_commits"] += 1
+                # Track dark commits (no Jira reference)
+                if not jira_matches:
+                    monthly_metrics[group_key]["dark_commits"] += 1
 
-            # Classify rework for each file
-            is_rework = False
-            rework_signals = {"file_churn": False, "same_author": False, "cross_author": False, "bug_fix": False}
+                # Classify rework for each file
+                is_rework = False
+                rework_signals = {"file_churn": False, "same_author": False, "cross_author": False, "bug_fix": False}
 
-            for file_path in diff_stats["files_changed"]:
-                file_signals = classify_rework(
-                    dev_normalized, commit_date, file_path, file_history, jira_issue_type
-                )
-                # Merge signals (OR logic)
-                for signal, value in file_signals.items():
-                    if value:
-                        rework_signals[signal] = True
-                        is_rework = True
+                for file_path in diff_stats["files_changed"]:
+                    file_signals = classify_rework(
+                        dev_normalized, commit_date, file_path, file_history, jira_issue_type
+                    )
+                    # Merge signals (OR logic)
+                    for signal, value in file_signals.items():
+                        if value:
+                            rework_signals[signal] = True
+                            is_rework = True
 
-                # Update file history
-                file_history[file_path].append((dev_normalized, commit_date))
+                    # Update file history
+                    file_history[file_path].append((dev_normalized, commit_date))
 
-            # Aggregate metrics by month
-            monthly_metrics[group_key]["commits"] += 1
-            monthly_metrics[group_key]["lines_added"] += diff_stats["lines_added"]
-            monthly_metrics[group_key]["lines_deleted"] += diff_stats["lines_deleted"]
-            monthly_metrics[group_key]["files_touched"].update(diff_stats["files_changed"])
-            monthly_metrics[group_key]["repos"][name] += 1
+                # Aggregate metrics by month
+                monthly_metrics[group_key]["commits"] += 1
+                monthly_metrics[group_key]["lines_added"] += diff_stats["lines_added"]
+                monthly_metrics[group_key]["lines_deleted"] += diff_stats["lines_deleted"]
+                monthly_metrics[group_key]["files_touched"].update(diff_stats["files_changed"])
+                monthly_metrics[group_key]["repos"][name] += 1
 
-            if is_rework:
-                monthly_metrics[group_key]["rework_commits"] += 1
-                for signal, value in rework_signals.items():
-                    if value:
-                        monthly_metrics[group_key]["rework_breakdown"][signal] += 1
+                if is_rework:
+                    monthly_metrics[group_key]["rework_commits"] += 1
+                    for signal, value in rework_signals.items():
+                        if value:
+                            monthly_metrics[group_key]["rework_breakdown"][signal] += 1
 
-    # Print summary
-    print(f"\nBitBucket Insights ({created_after} to today):")
-    print(f"  Total commits analyzed: {total_commits}")
-    print(f"  Matched to developers: {matched_commits}")
-    print(f"  Unmatched (excluded): {unmatched_commits}")
+        # Print commit summary
+        print(f"\nCommit Insights ({created_after} to today):")
+        print(f"  Total commits analyzed: {total_commits}")
+        print(f"  Matched to developers: {matched_commits}")
+        print(f"  Unmatched (excluded): {unmatched_commits}")
 
-    total_rework = sum(m["rework_commits"] for m in monthly_metrics.values())
-    total_dark = sum(m["dark_commits"] for m in monthly_metrics.values())
-    rework_pct = (total_rework / matched_commits * 100) if matched_commits > 0 else 0
+        total_rework = sum(m["rework_commits"] for m in monthly_metrics.values())
+        total_dark = sum(m["dark_commits"] for m in monthly_metrics.values())
+        rework_pct = (total_rework / matched_commits * 100) if matched_commits > 0 else 0
 
-    print(f"  Rework commits: {total_rework} ({rework_pct:.1f}%)")
-    print(f"  Dark commits (no Jira ref): {total_dark}")
+        print(f"  Rework commits: {total_rework} ({rework_pct:.1f}%)")
+        print(f"  Dark commits (no Jira ref): {total_dark}")
 
     # Fetch pull request data
     print(f"\nFetching pull requests from {len(BITBUCKET_REPOS)} repositories...")
@@ -1991,14 +2040,14 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
     from datetime import datetime
     import calendar
 
-    if not monthly_metrics:
+    if not monthly_metrics and not monthly_pr_metrics:
         print("\nNo data available for charts")
         return
 
     # Get current month to exclude incomplete data
     current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    # Build chart data
+    # Build chart data (only if commit data is available)
     chart_data = []
     for group_key, metrics in monthly_metrics.items():
         developer, period_start, period_end = group_key
@@ -2029,180 +2078,185 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
             "sort_date": period_date,
         })
 
-    if not chart_data:
-        print("\nNo data available for charts (no complete months)")
-        return
-
-    # Sort by date
-    chart_data.sort(key=lambda x: (x["sort_date"], x["Developer"]))
-
-    # Get unique developers and months
-    developers = sorted(set(d["Developer"] for d in chart_data))
-    months = sorted(set(d["Month"] for d in chart_data), key=lambda m: datetime.strptime(m, "%b %Y"))
-
-    # Get date range for titles
-    min_date = min(d["sort_date"] for d in chart_data)
-    max_date = max(d["sort_date"] for d in chart_data)
-    last_day = calendar.monthrange(max_date.year, max_date.month)[1]
-    end_date = max_date.replace(day=last_day)
-    date_range = f"({min_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')})"
-
     # Color palette for months
     colors = px.colors.qualitative.Plotly
 
-    # Build lookup by month
-    month_data = {}
-    for i, month in enumerate(months):
-        month_entries = [d for d in chart_data if d["Month"] == month]
-        dev_data = {d["Developer"]: d for d in month_entries}
-        month_data[month] = {
-            "commits": [dev_data.get(dev, {}).get("Commits", 0) for dev in developers],
-            "lines_added": [dev_data.get(dev, {}).get("Lines Added", 0) for dev in developers],
-            "lines_deleted": [dev_data.get(dev, {}).get("Lines Deleted", 0) for dev in developers],
-            "rework": [dev_data.get(dev, {}).get("Rework Commits", 0) for dev in developers],
-            "file_churn": [dev_data.get(dev, {}).get("File Churn", 0) for dev in developers],
-            "bug_fix": [dev_data.get(dev, {}).get("Bug Fix", 0) for dev in developers],
-            "same_author": [dev_data.get(dev, {}).get("Same-Author Rework", 0) for dev in developers],
-            "cross_author": [dev_data.get(dev, {}).get("Cross-Author Rework", 0) for dev in developers],
-            "color": colors[i % len(colors)],
-        }
+    # Date range for titles (default, will be updated if commit data available)
+    date_range = f"(since {created_after})"
 
-    # --- Chart 1: Commits by Month ---
-    fig1 = go.Figure()
-    for month in months:
-        fig1.add_trace(
-            go.Bar(
-                name=month,
-                x=developers,
-                y=month_data[month]["commits"],
-                text=month_data[month]["commits"],
-                textposition="outside",
-                texttemplate="%{text:.0f}",
-                marker_color=month_data[month]["color"],
+    # Variables for commit charts (may be empty if --include-commits not used)
+    developers = []
+    months = []
+
+    # Generate commit charts if data available
+    if chart_data:
+        # Sort by date
+        chart_data.sort(key=lambda x: (x["sort_date"], x["Developer"]))
+
+        # Get unique developers and months
+        developers = sorted(set(d["Developer"] for d in chart_data))
+        months = sorted(set(d["Month"] for d in chart_data), key=lambda m: datetime.strptime(m, "%b %Y"))
+
+        # Get date range for titles
+        min_date = min(d["sort_date"] for d in chart_data)
+        max_date = max(d["sort_date"] for d in chart_data)
+        last_day = calendar.monthrange(max_date.year, max_date.month)[1]
+        end_date = max_date.replace(day=last_day)
+        date_range = f"({min_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')})"
+
+        # Build lookup by month
+        month_data = {}
+        for i, month in enumerate(months):
+            month_entries = [d for d in chart_data if d["Month"] == month]
+            dev_data = {d["Developer"]: d for d in month_entries}
+            month_data[month] = {
+                "commits": [dev_data.get(dev, {}).get("Commits", 0) for dev in developers],
+                "lines_added": [dev_data.get(dev, {}).get("Lines Added", 0) for dev in developers],
+                "lines_deleted": [dev_data.get(dev, {}).get("Lines Deleted", 0) for dev in developers],
+                "rework": [dev_data.get(dev, {}).get("Rework Commits", 0) for dev in developers],
+                "file_churn": [dev_data.get(dev, {}).get("File Churn", 0) for dev in developers],
+                "bug_fix": [dev_data.get(dev, {}).get("Bug Fix", 0) for dev in developers],
+                "same_author": [dev_data.get(dev, {}).get("Same-Author Rework", 0) for dev in developers],
+                "cross_author": [dev_data.get(dev, {}).get("Cross-Author Rework", 0) for dev in developers],
+                "color": colors[i % len(colors)],
+            }
+
+        # --- Chart 1: Commits by Month ---
+        fig1 = go.Figure()
+        for month in months:
+            fig1.add_trace(
+                go.Bar(
+                    name=month,
+                    x=developers,
+                    y=month_data[month]["commits"],
+                    text=month_data[month]["commits"],
+                    textposition="outside",
+                    texttemplate="%{text:.0f}",
+                    marker_color=month_data[month]["color"],
+                )
             )
+
+        fig1.update_layout(
+            title=f"Developer Commits by Month {date_range}",
+            xaxis_tickangle=-45,
+            xaxis_title="Developer",
+            yaxis_title="Commits",
+            font=dict(size=12),
+            barmode="group",
+            width=1200,
+            height=600,
+            legend_title_text="Month",
         )
 
-    fig1.update_layout(
-        title=f"Developer Commits by Month {date_range}",
-        xaxis_tickangle=-45,
-        xaxis_title="Developer",
-        yaxis_title="Commits",
-        font=dict(size=12),
-        barmode="group",
-        width=1200,
-        height=600,
-        legend_title_text="Month",
-    )
+        # Add vertical lines between developers
+        for i in range(len(developers) - 1):
+            fig1.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
 
-    # Add vertical lines between developers
-    for i in range(len(developers) - 1):
-        fig1.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
+        fig1.write_image("developer_commits.png")
+        print("\nGenerated: developer_commits.png")
 
-    fig1.write_image("developer_commits.png")
-    print("\nGenerated: developer_commits.png")
-
-    # --- Chart 2: Rework Commits by Month ---
-    fig2 = go.Figure()
-    for month in months:
-        fig2.add_trace(
-            go.Bar(
-                name=month,
-                x=developers,
-                y=month_data[month]["rework"],
-                text=month_data[month]["rework"],
-                textposition="outside",
-                texttemplate="%{text:.0f}",
-                marker_color=month_data[month]["color"],
+        # --- Chart 2: Rework Commits by Month ---
+        fig2 = go.Figure()
+        for month in months:
+            fig2.add_trace(
+                go.Bar(
+                    name=month,
+                    x=developers,
+                    y=month_data[month]["rework"],
+                    text=month_data[month]["rework"],
+                    textposition="outside",
+                    texttemplate="%{text:.0f}",
+                    marker_color=month_data[month]["color"],
+                )
             )
+
+        fig2.update_layout(
+            title=f"Developer Rework Commits by Month {date_range}",
+            xaxis_tickangle=-45,
+            xaxis_title="Developer",
+            yaxis_title="Rework Commits",
+            font=dict(size=12),
+            barmode="group",
+            width=1200,
+            height=600,
+            legend_title_text="Month",
         )
 
-    fig2.update_layout(
-        title=f"Developer Rework Commits by Month {date_range}",
-        xaxis_tickangle=-45,
-        xaxis_title="Developer",
-        yaxis_title="Rework Commits",
-        font=dict(size=12),
-        barmode="group",
-        width=1200,
-        height=600,
-        legend_title_text="Month",
-    )
+        for i in range(len(developers) - 1):
+            fig2.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
 
-    for i in range(len(developers) - 1):
-        fig2.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
+        fig2.write_image("developer_rework.png")
+        print("Generated: developer_rework.png")
 
-    fig2.write_image("developer_rework.png")
-    print("Generated: developer_rework.png")
+        # --- Chart 3: Repository Distribution by Month ---
+        # Developers on X-axis, months as grouped bars, repos stacked within each bar
+        all_repos = sorted(set(
+            repo for d in chart_data for repo in d.get("repos", {}).keys()
+        ))
 
-    # --- Chart 3: Repository Distribution by Month ---
-    # Developers on X-axis, months as grouped bars, repos stacked within each bar
-    all_repos = sorted(set(
-        repo for d in chart_data for repo in d.get("repos", {}).keys()
-    ))
+        # Build lookup: month -> developer -> repo -> count
+        month_repo_data = {}
+        for month in months:
+            month_entries = [d for d in chart_data if d["Month"] == month]
+            dev_repos = {}
+            for d in month_entries:
+                dev_repos[d["Developer"]] = d.get("repos", {})
+            month_repo_data[month] = dev_repos
 
-    # Build lookup: month -> developer -> repo -> count
-    month_repo_data = {}
-    for month in months:
-        month_entries = [d for d in chart_data if d["Month"] == month]
-        dev_repos = {}
-        for d in month_entries:
-            dev_repos[d["Developer"]] = d.get("repos", {})
-        month_repo_data[month] = dev_repos
+        # Calculate bar positions manually for grouped+stacked effect
+        num_months = len(months)
+        bar_width = 0.8 / num_months
 
-    # Calculate bar positions manually for grouped+stacked effect
-    num_months = len(months)
-    bar_width = 0.8 / num_months
+        # Assign consistent colors per repo
+        repo_colors = {repo: colors[i % len(colors)] for i, repo in enumerate(all_repos)}
 
-    # Assign consistent colors per repo
-    repo_colors = {repo: colors[i % len(colors)] for i, repo in enumerate(all_repos)}
+        fig3 = go.Figure()
 
-    fig3 = go.Figure()
+        # For each repo, add traces for each month (stacking happens per position)
+        for repo_idx, repo in enumerate(all_repos):
+            for month_idx, month in enumerate(months):
+                # Calculate x offset for this month's bars
+                offset = (month_idx - (num_months - 1) / 2) * bar_width
+                x_positions = [i + offset for i in range(len(developers))]
 
-    # For each repo, add traces for each month (stacking happens per position)
-    for repo_idx, repo in enumerate(all_repos):
-        for month_idx, month in enumerate(months):
-            # Calculate x offset for this month's bars
-            offset = (month_idx - (num_months - 1) / 2) * bar_width
-            x_positions = [i + offset for i in range(len(developers))]
+                repo_commits = [month_repo_data[month].get(dev, {}).get(repo, 0) for dev in developers]
 
-            repo_commits = [month_repo_data[month].get(dev, {}).get(repo, 0) for dev in developers]
+                # Only show repo name in legend for first month to avoid duplicates
+                show_legend = month_idx == 0
 
-            # Only show repo name in legend for first month to avoid duplicates
-            show_legend = month_idx == 0
+                fig3.add_trace(go.Bar(
+                    name=repo if show_legend else None,
+                    x=x_positions,
+                    y=repo_commits,
+                    width=bar_width,
+                    legendgroup=repo,
+                    showlegend=show_legend,
+                    offsetgroup=month,
+                    marker_color=repo_colors[repo],
+                ))
 
-            fig3.add_trace(go.Bar(
-                name=repo if show_legend else None,
-                x=x_positions,
-                y=repo_commits,
-                width=bar_width,
-                legendgroup=repo,
-                showlegend=show_legend,
-                offsetgroup=month,
-                marker_color=repo_colors[repo],
-            ))
+        fig3.update_layout(
+            title=f"Developer Repository Distribution by Month {date_range}",
+            xaxis=dict(
+                tickmode="array",
+                tickvals=list(range(len(developers))),
+                ticktext=developers,
+                tickangle=-45,
+                title="Developer",
+            ),
+            yaxis_title="Commits",
+            barmode="stack",
+            width=1200,
+            height=600,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
 
-    fig3.update_layout(
-        title=f"Developer Repository Distribution by Month {date_range}",
-        xaxis=dict(
-            tickmode="array",
-            tickvals=list(range(len(developers))),
-            ticktext=developers,
-            tickangle=-45,
-            title="Developer",
-        ),
-        yaxis_title="Commits",
-        barmode="stack",
-        width=1200,
-        height=600,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
+        # Add vertical lines between developers
+        for i in range(len(developers) - 1):
+            fig3.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
 
-    # Add vertical lines between developers
-    for i in range(len(developers) - 1):
-        fig3.add_vline(x=i + 0.5, line_width=1, line_dash="solid", line_color="lightgray")
-
-    fig3.write_image("developer_repo_dist.png")
-    print("Generated: developer_repo_dist.png")
+        fig3.write_image("developer_repo_dist.png")
+        print("Generated: developer_repo_dist.png")
 
     # --- Chart 4: Total Pull Requests by Month ---
     # Build PR totals data, excluding current month
@@ -2312,8 +2366,10 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
         fig5.write_image("developer_pull_requests.png")
         print("Generated: developer_pull_requests.png")
 
-    print(f"\nDevelopers: {len(developers)}")
-    print(f"Months: {', '.join(months)}")
+    if chart_data:
+        print(f"\nCommit data: {len(developers)} developers, {len(months)} months")
+    if pr_chart_data:
+        print(f"PR data: {len(pr_developers)} developers, {len(pr_months_list)} months")
 
 
 def main():
@@ -2419,6 +2475,11 @@ Examples:
         action="store_true",
         help="Calculate developer metrics from BitBucket commits (requires --created-after)",
     )
+    parser.add_argument(
+        "--include-commits",
+        action="store_true",
+        help="Include commit analysis in --bitbucket-insights (slower, fetches commit diffs)",
+    )
 
     args = parser.parse_args()
 
@@ -2489,7 +2550,7 @@ Examples:
         bitbucket_client = BitBucketClient(
             args.username, args.password, verify_ssl=not args.no_verify_ssl
         )
-        calculate_bitbucket_insights(bitbucket_client, client, args.created_after)
+        calculate_bitbucket_insights(bitbucket_client, client, args.created_after, args.include_commits)
 
         # Exit if only bitbucket-insights was requested (not combined with other queries)
         if not args.story_points_summary and not args.developer_velocity:
