@@ -47,3 +47,26 @@ def get_monthly_headcount(
             current = datetime(current.year, current.month + 1, 1)
 
     return result
+
+
+def get_staffing_date_range(excel_path: str) -> tuple[str, str]:
+    """
+    Get the earliest and latest dates from staffing data.
+
+    Args:
+        excel_path: Path to Excel file with AMAT DOJ and AMAT DOD columns
+
+    Returns:
+        Tuple of (start_month, end_month) in "YYYY-MM" format
+    """
+    df = pd.read_excel(excel_path)
+
+    df = df.dropna(subset=["AMAT DOJ", "AMAT DOD"])
+
+    df["AMAT DOJ"] = pd.to_datetime(df["AMAT DOJ"])
+    df["AMAT DOD"] = pd.to_datetime(df["AMAT DOD"])
+
+    earliest = df["AMAT DOJ"].min()
+    latest = df["AMAT DOD"].max()
+
+    return earliest.strftime("%Y-%m"), latest.strftime("%Y-%m")
