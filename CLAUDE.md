@@ -93,7 +93,7 @@ python jira_info.py -u https://jira.company.com -U username -P password --genera
 
 ## Components Tracked
 
-The `COMPONENTS` list (lines 597-658) in jira_info.py defines all tracked ASE components:
+The `COMPONENTS` list in `components.yaml` defines all tracked ASE components:
 - Alarms Dashboard (Alarm_26.01)
 - AutoUVA Dashboard (AUTO_UVA_V4.0)
 - CSV Dashboard (CSV_26.01)
@@ -125,12 +125,13 @@ Three query patterns for each component:
 
 Install all required packages:
 ```bash
-pip install pandas plotly kaleido openpyxl requests
+pip install pandas plotly kaleido openpyxl requests pyyaml
 ```
 
 - **pandas, openpyxl**: Excel file reading and data manipulation
 - **plotly, kaleido**: Chart generation and PNG export
 - **requests**: REST API interactions with Jira and BitBucket
+- **pyyaml**: YAML configuration file loading
 
 ## Important Implementation Notes
 
