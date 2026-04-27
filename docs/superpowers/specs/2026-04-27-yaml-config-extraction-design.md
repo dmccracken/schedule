@@ -47,10 +47,11 @@ testers:
   - "Henrik Schneider"
   - "Michael Olstad"
   - "Ryan Patz"
-  - "Dennis"
-  - "Minal"
 
 developers:
+  - "Minal"
+  - "Isabel"
+  - "Dennis"
   - "Hemalatha Mallala"
   - "Hemalatha Nallanna Gari"
   - "NAGARAJ B S"
@@ -62,6 +63,9 @@ developers:
   - "Lundi"
   - "Prajwal"
   - "Ramyaa"
+  - "Sabrish"
+  - "Padma"
+
 ```
 
 ## Loading Logic
