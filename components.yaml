@@ -1,0 +1,65 @@
+components:
+  - component: "Alarms Dashboard"
+    name: "Alarm Dashboard"
+    version: "Alarm_26.01"
+    release_notes: "https://apg-bb.amat.com/projects/FSSRPT/repos/alarm_dispatch/browse/Alarm_Comprehensive_Service/scripts/ReleaseNotes.txt"
+  - component: "AutoUVA"
+    name: "AutoUVA Dashboard"
+    version: "AUTO_UVA_26.05"
+    release_notes: "https://apg-bb.amat.com/projects/FSSRPT/repos/trace_segmentation/browse/Auto_Uva_Comprehensive_Service/scripts/ReleaseNotes.txt"
+  - component: "CSV"
+    name: "CSV Dashboard"
+    version: "CSV_26.01"
+    release_notes: "https://apg-bb.amat.com/projects/FSSRPT/repos/csv/browse/CSV_Comprehensive_Service/scripts/ReleaseNotes.txt"
+  - component: "DES"
+    name: "DES Dashboard"
+    version: "DES_V2"
+    release_notes: null
+  - component: "DES"
+    name: "DES Dashboard"
+    version: "DES_V26.05"
+    release_notes: null
+  - component: "PPTS"
+    name: "PPTS Dashboard"
+    version: "PPTS_26.03"
+    release_notes: "https://apg-bb.amat.com/projects/FSSRPT/repos/pts_dashboard/browse/ReleaseNotes.txt"
+  - component: "PPTS"
+    name: "PPTS Dashboard"
+    version: "PPTS_26.07"
+    release_notes: "https://apg-bb.amat.com/projects/FSSRPT/repos/pts_dashboard/browse/ReleaseNotes.txt"
+  - component: "ToolConnection"
+    name: "ToolConnection Dashboard"
+    version: "Toolconnection2.0"
+    release_notes: null
+  - component: "Guardband"
+    name: "Guardband Dashboard"
+    version: null
+    release_notes: null
+  - component: "EPD Dashboard"
+    name: "EPD Dashboard"
+    version: null
+    release_notes: null
+  - component: "PdM Dashboard"
+    name: "PdM Dashboard"
+    version: null
+    release_notes: null
+
+bitbucket_repos:
+  - project: "FSSRPT"
+    slug: "des"
+    name: "DES"
+  - project: "FSSRPT"
+    slug: "csv"
+    name: "CSV"
+  - project: "FSSRPT"
+    slug: "trace_segmentation"
+    name: "Trace Segmentation"
+  - project: "FSSRPT"
+    slug: "alarm_dispatch"
+    name: "Alarm Dispatch"
+  - project: "FSSRPT"
+    slug: "tool_connection_control_app"
+    name: "Tool Connection"
+  - project: "FSSRPT"
+    slug: "pts_dashboard"
+    name: "PTS Dashboard"
