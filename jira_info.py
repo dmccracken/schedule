@@ -12,10 +12,31 @@ import json
 import sys
 import re
 import time
+import yaml
 from datetime import datetime
 from urllib.parse import urljoin
+from pathlib import Path
 from requests.auth import HTTPBasicAuth
 from staffing import get_monthly_headcount, get_staffing_date_range
+
+
+def _load_yaml_config(filename):
+    """Load a YAML config file from the same directory as this script."""
+    config_path = Path(__file__).parent / filename
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+# Load configuration from YAML files
+_components_config = _load_yaml_config("components.yaml")
+_team_config = _load_yaml_config("team.yaml")
+
+COMPONENTS = _components_config["components"]
+BITBUCKET_REPOS = _components_config["bitbucket_repos"]
+TESTERS = _team_config["testers"]
+VALID_DEVELOPERS = _team_config["developers"]
 
 
 class BitBucketClient:
@@ -2045,18 +2066,12 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
         print("\nNo data available for charts")
         return
 
-    # Get current month to exclude incomplete data
-    current_month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
     # Build chart data (only if commit data is available)
     chart_data = []
     for group_key, metrics in monthly_metrics.items():
         developer, period_start, period_end = group_key
 
-        # Skip current month (incomplete)
         period_date = datetime.strptime(period_start, "%Y-%m-%d")
-        if period_date >= current_month_start:
-            continue
 
         # Clean up developer name
         display_name = developer.replace(" --CNTR", "")
@@ -2260,13 +2275,11 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
         print("Generated: developer_repo_dist.png")
 
     # --- Chart 4: Total Pull Requests by Month with Staffing Overlay ---
-    # Build PR totals data, excluding current month
+    # Build PR totals data
     pr_months = []
     pr_month_to_total = {}
     for period_start in sorted(monthly_pr_totals.keys()):
         period_date = datetime.strptime(period_start, "%Y-%m-%d")
-        if period_date >= current_month_start:
-            continue
         month_label = period_date.strftime("%b %Y")
         pr_months.append(month_label)
         pr_month_to_total[month_label] = monthly_pr_totals[period_start]
@@ -2371,8 +2384,6 @@ def generate_bitbucket_charts(monthly_metrics, monthly_pr_metrics, monthly_pr_to
         developer, period_start, period_end = group_key
 
         period_date = datetime.strptime(period_start, "%Y-%m-%d")
-        if period_date >= current_month_start:
-            continue
 
         display_name = developer.replace(" --CNTR", "")
         month_label = period_date.strftime("%b %Y")
