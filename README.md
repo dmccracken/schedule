@@ -76,16 +76,7 @@ Command-line tool for querying Jira Data Center using REST API to retrieve and a
 - **Flexible Output**: Standard formatted output or JSON export
 
 ### Supported Components
-The tool tracks the following ASE components:
-- Alarms Dashboard (Alarm_26.01)
-- AutoUVA Dashboard (AUTO_UVA_26.05)
-- CSV Dashboard (CSV_26.01)
-- DES Dashboard (DES_V26.05)
-- PPTS Dashboard (PPTS_26.07)
-- ToolConnection Dashboard (Toolconnection2.0)
-- Guardband Dashboard
-- EPD Dashboard
-- PdM Dashboard
+The tool tracks components listed in the components.yaml file
 
 ### Query Types
 
