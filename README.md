@@ -128,7 +128,9 @@ project = ASE and component = "<component>" AND fixVersion = "<version>" ORDER B
 | `--generate-release-notes` | No | Generate release notes table for all components |
 | `--include-commit-details` | No | Include commit counts and resolution times (requires BitBucket API calls) |
 | `--developer-velocity` | No | Generate developer velocity charts (story points and issues per month) |
-| `--created-after` | No* | Filter issues created on or after this date (YYYY-MM-DD format, *required for --developer-velocity) |
+| `--created-after` | No* | Filter issues created on or after this date (YYYY-MM-DD format, *required for --developer-velocity and --bitbucket-insights) |
+| `--bitbucket-insights` | No | Calculate developer metrics from BitBucket commits and pull requests |
+| `--include-commits` | No | Include commit analysis in --bitbucket-insights (slower, fetches commit diffs) |
 
 ### Usage Examples
 
@@ -172,6 +174,16 @@ python jira_info.py -u https://jira.company.com -U username -P password --print-
 python jira_info.py -u https://jira.company.com -U username -P password --developer-velocity --created-after 2026-01-01
 ```
 
+**Generate BitBucket Insights (Pull Requests):**
+```bash
+python jira_info.py -u https://jira.company.com -U username -P password --bitbucket-insights --created-after 2026-01-01
+```
+
+**Generate BitBucket Insights with Commit Analysis:**
+```bash
+python jira_info.py -u https://jira.company.com -U username -P password --bitbucket-insights --include-commits --created-after 2026-01-01
+```
+
 ### Output Features
 
 #### Standard Output
@@ -213,15 +225,28 @@ When using `--developer-velocity --created-after YYYY-MM-DD`:
   - `developer_story_points.png` - Story points by month per developer
   - `developer_issues.png` - Issues resolved by month per developer
 - **Tester Exclusion**: Automatically excludes testers from velocity metrics. If an issue is assigned to a tester at "In Progress" time, the tool searches the assignee history to credit the last valid developer who worked on it.
-- **Current Month Filtering**: Excludes the current month to show only complete data
 - **Visual Features**:
   - Grouped bar charts by month with color coding
   - Vertical separator lines between developers
   - Data labels showing exact values
 
+#### BitBucket Insights
+When using `--bitbucket-insights --created-after YYYY-MM-DD`:
+- Analyzes pull requests across all configured BitBucket repositories
+- Tracks merged PRs per developer per month
+- Generates chart files:
+  - `total_pull_requests.png` - Total PRs by month with optional staffing overlay
+  - `developer_pull_requests.png` - PRs by month per developer
+- With `--include-commits` (slower, more detailed):
+  - `developer_commits.png` - Commits by month per developer
+  - `developer_rework.png` - Rework commits by month per developer
+  - `developer_repo_dist.png` - Repository distribution by developer
+- **Staffing Overlay**: If `AMAT Developer Project Duration.xlsx` exists, displays headcount trend on the total PRs chart
+
 ### Dependencies
 ```python
 requests
+pyyaml
 ```
 
 ### Architecture
@@ -250,7 +275,8 @@ requests
 ### Code Organization
 The tool uses a modular design with:
 - **Query Configuration**: Centralized JQL prefixes and filters as constants
-- **Component Configuration**: `COMPONENTS` list includes component metadata and BitBucket release notes URLs
+- **Component Configuration**: `components.yaml` file defines component metadata and BitBucket release notes URLs
+- **Team Configuration**: `team.yaml` file defines valid developers and testers for attribution
 - **Reusable Functions**: Single `execute_component_queries()` function handles all three query types (BACKLOG, ACTIVE RELEASE, TOTAL RELEASE)
 - **Data Extraction**: Separate functions for story points extraction and summary generation
 - **Release Processing**: Dedicated functions for parsing release notes and validating against Jira
@@ -265,21 +291,31 @@ The tool uses a modular design with:
 
 ### Install Required Dependencies
 ```bash
-pip install pandas plotly kaleido openpyxl requests
+pip install pandas plotly kaleido openpyxl requests pyyaml
 ```
 
 ### File Structure
 ```
 schedule/
 ├── README.md
+├── CLAUDE.md                       # Claude Code instructions
 ├── status.py
 ├── jira_info.py
+├── staffing.py                     # Staffing data module
+├── components.yaml                 # Component and BitBucket repo configuration
+├── team.yaml                       # Developer and tester lists
 ├── Status.xlsx                     # Input file for status.py
 ├── status_gantt_chart_image.png    # Output from status.py
 ├── backlog_bar_chart_image.png     # Output from status.py
 ├── active_bar_chart_image.png      # Output from status.py
 ├── developer_story_points.png      # Output from --developer-velocity
-└── developer_issues.png            # Output from --developer-velocity
+├── developer_issues.png            # Output from --developer-velocity
+├── developer_velocity.png          # Output from --developer-velocity
+├── total_pull_requests.png         # Output from --bitbucket-insights
+├── developer_pull_requests.png     # Output from --bitbucket-insights
+├── developer_commits.png           # Output from --bitbucket-insights --include-commits
+├── developer_rework.png            # Output from --bitbucket-insights --include-commits
+└── developer_repo_dist.png         # Output from --bitbucket-insights --include-commits
 ```
 
 ---
@@ -334,15 +370,16 @@ schedule/
 ## Contributing
 
 When modifying queries in `jira_info.py`:
-1. Update the `COMPONENTS` list with new components, including:
+1. Update `components.yaml` with new components, including:
    - `component`: Jira component name
    - `name`: Display name
-   - `version`: Current fix version (or None)
-   - `release_notes`: BitBucket URL to ReleaseNotes.txt (or None)
-2. Ensure version numbers match Jira fix versions
-3. Test queries using `--test-only` before full execution
-4. Use the `execute_component_queries()` function for new query types to maintain consistency
-5. Add new JQL prefix constants if needed for additional query patterns
+   - `version`: Current fix version (or null)
+   - `release_notes`: BitBucket URL to ReleaseNotes.txt (or null)
+2. Update `team.yaml` to add/remove developers or testers
+3. Ensure version numbers match Jira fix versions
+4. Test queries using `--test-only` before full execution
+5. Use the `execute_component_queries()` function for new query types to maintain consistency
+6. Add new JQL prefix constants if needed for additional query patterns
 
 When updating visualizations in `status.py`:
 1. Maintain consistent chart dimensions for reporting
