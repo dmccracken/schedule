@@ -1193,6 +1193,8 @@ COMMON_JQL_TOTAL_RELEASE_PREFIX = "project = ASE and component = "
 COMMON_JQL_ACTIVE_RELEASE_VERSION = " AND fixVersion = "
 COMMON_JQL_ACTIVE_RELEASE_FILTER = " and status != Closed and status != DUPLICATE and status != REJECTED and status != VERIFICATION "
 COMMON_JQL_POSTFIX = " ORDER BY Rank ASC"
+COMMON_JQL_NEW_JIRAS_PREFIX = "project = ASE AND component = "
+COMMON_JQL_NEW_JIRAS_SUFFIX = " AND created >= -7d ORDER BY created DESC"
 
 
 class ReleaseNotesParser:
