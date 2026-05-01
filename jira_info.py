@@ -1197,6 +1197,76 @@ COMMON_JQL_NEW_JIRAS_PREFIX = "project = ASE AND component = "
 COMMON_JQL_NEW_JIRAS_SUFFIX = " AND created >= -7d ORDER BY created DESC"
 
 
+def list_new_jiras(client, components):
+    """
+    List Jira issues created in the last 7 days for all components.
+
+    Args:
+        client: JiraClient instance
+        components: List of component dictionaries from COMPONENTS
+
+    Returns:
+        None (prints to stdout)
+    """
+    print(f"\n{'='*80}")
+    print("NEW JIRAS (Last 7 Days)")
+    print(f"{'='*80}")
+
+    total_issues = 0
+    components_with_issues = 0
+
+    for component in components:
+        component_name = component["name"]
+        version = component.get("version")
+        jira_component = component["component"]
+
+        jql = (
+            COMMON_JQL_NEW_JIRAS_PREFIX
+            + f'"{jira_component}"'
+            + COMMON_JQL_NEW_JIRAS_SUFFIX
+        )
+
+        results = client.search_issues(
+            jql,
+            max_results=100,
+            fields=["summary", "customfield_10106", "fixVersions"],
+        )
+
+        if not results:
+            continue
+
+        issues = results.get("issues", [])
+        if not issues:
+            continue
+
+        components_with_issues += 1
+        total_issues += len(issues)
+
+        version_display = f"[{version}]" if version else "[No Version]"
+        print(f"\n{component_name} {version_display}")
+        print("-" * 80)
+
+        for issue in issues:
+            key = issue.get("key", "N/A")
+            fields = issue.get("fields", {})
+            summary = fields.get("summary", "No summary")
+            story_points = fields.get("customfield_10106")
+
+            if story_points is not None:
+                points_display = f"{int(story_points)} pts"
+            else:
+                points_display = "-"
+
+            print(f"  {key:<12} {points_display:<8} {summary}")
+
+    print(f"\n{'-'*80}")
+    if total_issues == 0:
+        print("No new issues found in the last 7 days.")
+    else:
+        print(f"Total: {total_issues} new issues across {components_with_issues} components")
+    print(f"{'='*80}")
+
+
 class ReleaseNotesParser:
     """Parser for release notes files"""
 
