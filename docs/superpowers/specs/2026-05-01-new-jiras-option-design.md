@@ -22,7 +22,7 @@ python jira_info.py -u https://jira.company.com -U username -P password --new-ji
 
 ### JQL Query
 
-For each component in `COMPONENTS` where `version` is not null:
+For each component in `COMPONENTS`:
 
 ```sql
 project = ASE AND component = "<component>" AND created >= -7d ORDER BY created DESC
@@ -39,8 +39,8 @@ project = ASE AND component = "<component>" AND created >= -7d ORDER BY created 
 
 ### Component Filtering
 
-- Only components with `version != null` are queried
-- Skipped components: Guardband, EPD Dashboard, PdM Dashboard
+- All components in `COMPONENTS` are queried, including those without a version
+- Components without a version display as `[No Version]` in the output
 
 ### Output Format
 
@@ -61,8 +61,12 @@ AutoUVA Dashboard [AUTO_UVA_26.05]
   ASE-1240    2 pts    Update trace segmentation algorithm
   ASE-1241    -        Improve error handling (no estimate)
 
+Guardband Dashboard [No Version]
 --------------------------------------------------------------------------------
-Total: 4 new issues across 2 components
+  ASE-1250    1 pts    Add guardband threshold configuration
+
+--------------------------------------------------------------------------------
+Total: 5 new issues across 3 components
 ================================================================================
 ```
 
@@ -111,4 +115,3 @@ COMMON_JQL_NEW_JIRAS_SUFFIX = " AND created >= -7d ORDER BY created DESC"
 
 - Lookback period is fixed at 7 days (not configurable)
 - Output format is console table only (no CSV option)
-- Only versioned components are queried
