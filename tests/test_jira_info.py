@@ -75,3 +75,23 @@ def test_list_new_jiras_shows_no_version_label():
     assert "Guardband Dashboard [No Version]" in output
     assert "ASE-5678" in output
     assert "-" in output  # No story points
+
+
+def test_list_new_jiras_handles_no_issues():
+    """Test output when no new issues exist."""
+    mock_client = MagicMock()
+    mock_client.search_issues.return_value = {"total": 0, "issues": []}
+
+    components = [
+        {"component": "Test Component", "name": "Test Dashboard", "version": "v1.0"}
+    ]
+
+    captured = StringIO()
+    sys.stdout = captured
+    try:
+        list_new_jiras(mock_client, components)
+    finally:
+        sys.stdout = sys.__stdout__
+
+    output = captured.getvalue()
+    assert "No new issues found in the last 7 days." in output
