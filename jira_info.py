@@ -2520,6 +2520,12 @@ Examples:
         help="Include commit analysis in --bitbucket-insights (slower, fetches commit diffs)",
     )
 
+    parser.add_argument(
+        "--new-jiras",
+        action="store_true",
+        help="List Jira issues created in the last 7 days for all components",
+    )
+
     args = parser.parse_args()
 
     # Create Jira client
