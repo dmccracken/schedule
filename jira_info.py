@@ -1194,12 +1194,12 @@ COMMON_JQL_ACTIVE_RELEASE_VERSION = " AND fixVersion = "
 COMMON_JQL_ACTIVE_RELEASE_FILTER = " and status != Closed and status != DUPLICATE and status != REJECTED and status != VERIFICATION "
 COMMON_JQL_POSTFIX = " ORDER BY Rank ASC"
 COMMON_JQL_NEW_JIRAS_PREFIX = "project = ASE AND component = "
-COMMON_JQL_NEW_JIRAS_SUFFIX = " AND created >= -7d ORDER BY created DESC"
+COMMON_JQL_NEW_JIRAS_SUFFIX = " AND (created >= -7d OR fixVersion changed AFTER -7d) ORDER BY created DESC"
 
 
 def list_new_jiras(client, components):
     """
-    List Jira issues created in the last 7 days for all components.
+    List Jira issues created or added to a release in the last 7 days for all components.
 
     Args:
         client: JiraClient instance
@@ -2523,7 +2523,7 @@ Examples:
     parser.add_argument(
         "--new-jiras",
         action="store_true",
-        help="List Jira issues created in the last 7 days for all components",
+        help="List Jira issues created or added to a release in the last 7 days",
     )
 
     args = parser.parse_args()
@@ -2569,7 +2569,7 @@ Examples:
 
     # List new jiras if requested
     if args.new_jiras:
-        print("\nFetching new Jira issues from the last 7 days...")
+        print("\nFetching Jira issues created or added to a release in the last 7 days...")
         list_new_jiras(client, COMPONENTS)
         sys.exit(0)
 
