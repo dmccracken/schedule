@@ -2567,6 +2567,12 @@ Examples:
         print(table)
         sys.exit(0)
 
+    # List new jiras if requested
+    if args.new_jiras:
+        print("\nFetching new Jira issues from the last 7 days...")
+        list_new_jiras(client, COMPONENTS)
+        sys.exit(0)
+
     # Calculate developer velocity if requested
     if args.developer_velocity:
         if not args.created_after:
