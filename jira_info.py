@@ -1223,8 +1223,10 @@ def list_new_jiras(client, components):
         jql = (
             COMMON_JQL_NEW_JIRAS_PREFIX
             + f'"{jira_component}"'
-            + COMMON_JQL_NEW_JIRAS_SUFFIX
         )
+        if version:
+            jql += f' AND fixVersion = "{version}"'
+        jql += COMMON_JQL_NEW_JIRAS_SUFFIX
 
         results = client.search_issues(
             jql,
